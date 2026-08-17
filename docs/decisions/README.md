@@ -18,3 +18,4 @@ Format: numbered, short, present tense. Status is `accepted`, `superseded by NNN
 | [0006](0006-defer-js-frontend.md) | Server-rendered HTML now, defer the JS frontend | accepted |
 | [0007](0007-squad-similarity-is-sql.md) | Squad similarity is SQL, not a vector index | accepted |
 | [0008](0008-freeze-the-deterministic-baseline.md) | Freeze the deterministic baseline; don't tune the gap away | accepted |
+| [0009](0009-agent-guardrails-are-structural.md) | Agent guardrails are structural, not prompted | accepted |

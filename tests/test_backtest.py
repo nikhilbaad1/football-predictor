@@ -8,7 +8,6 @@ rather than approximately.
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
 import pytest
 
 from fpp.evaluation.backtest import walk_forward

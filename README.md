@@ -141,7 +141,13 @@ src/fpp/
 scripts/      ingest, backtest, predict
 docs/decisions/  ADRs — why things are the way they are
 tests/        74 tests; model maths checked against closed-form values
+.github/workflows/  CI: lint, tests on 3.10 and 3.13, leakage check as its own job
+.claude/hooks/      PreToolUse guard: no pushes or merges to main, no destructive SQL
 ```
+
+Work reaches `main` through a pull request. That is enforced by the hook rather than
+by convention, because the agents arriving in phase 2 are supposed to stop at a PR and
+a prompt is not what makes them stop — see [0009](docs/decisions/0009-agent-guardrails-are-structural.md).
 
 ## Testing
 

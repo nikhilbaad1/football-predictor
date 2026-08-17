@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.4", "pytest-cov>=4.1", "ruff>=0.3"]
+dev = ["pytest>=7.4", "pytest-cov>=4.1", "ruff>=0.16,<0.17"]
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -33,3 +33,11 @@ pythonpath = ["src"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+# Selected explicitly rather than left to ruff's default, which has expanded
+# across releases. CI treats lint as a gate, so the rule set has to be the
+# project's choice and not drift when a new ruff ships.
+#   E,F  pycodestyle + pyflakes    I  import order
+#   B    bugbear                   UP pyupgrade
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

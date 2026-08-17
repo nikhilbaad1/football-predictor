@@ -89,7 +89,8 @@ class TestFitting:
         ).fit(synthetic_matches)
         assert model.converged
 
-        true_centred = {t: s - np.mean(list(TRUE_STRENGTHS.values())) for t, s in TRUE_STRENGTHS.items()}
+        mean_strength = np.mean(list(TRUE_STRENGTHS.values()))
+        true_centred = {t: s - mean_strength for t, s in TRUE_STRENGTHS.items()}
         fitted = np.array([model.attack[t] for t in TRUE_STRENGTHS])
         truth = np.array([true_centred[t] for t in TRUE_STRENGTHS])
 
