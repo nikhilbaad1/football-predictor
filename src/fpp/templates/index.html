@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Football Predictor — {{ division }}</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --line: #262b36;
+    --text: #e6e8ed; --muted: #8b93a3;
+    --home: #4f9cf9; --draw: #8b93a3; --away: #f97362;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem 1rem; background: var(--bg); color: var(--text);
+    font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 780px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; }
+  .sub { color: var(--muted); font-size: .875rem; margin-bottom: 2rem; }
+  .match {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 1rem 1.25rem; margin-bottom: .75rem;
+  }
+  .teams { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+  .teams strong { font-weight: 600; }
+  .score { color: var(--muted); font-size: .8125rem; font-variant-numeric: tabular-nums; }
+  .bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; margin: .75rem 0 .5rem; }
+  .bar span { display: block; }
+  .bar .h { background: var(--home); }
+  .bar .d { background: var(--draw); }
+  .bar .a { background: var(--away); }
+  .legend {
+    display: flex; justify-content: space-between;
+    font-size: .8125rem; font-variant-numeric: tabular-nums; color: var(--muted);
+  }
+  .legend b { color: var(--text); font-weight: 600; }
+  .swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: .35rem; }
+  footer {
+    margin-top: 2.5rem; padding-top: 1.25rem; border-top: 1px solid var(--line);
+    color: var(--muted); font-size: .8125rem;
+  }
+  footer p { margin: .35rem 0; }
+  .empty { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 2rem; text-align: center; color: var(--muted); }
+  code { background: #0b0d11; padding: .15rem .4rem; border-radius: 4px; font-size: .85em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>{{ division }} — match predictions</h1>
+  <p class="sub">
+    Elo + Dixon-Coles blend, trained on {{ "{:,}".format(n_train) }} matches across Europe's top 5 leagues.
+    Model <code>{{ model_version }}</code>.
+  </p>
+
+  {% if fixtures %}
+    {% for f in fixtures %}
+    <article class="match">
+      <div class="teams">
+        <strong>{{ f.home_team }} v {{ f.away_team }}</strong>
+        <span class="score">
+          xG {{ f.expected_goals_home }}–{{ f.expected_goals_away }} ·
+          likeliest {{ f.likeliest_score }} ({{ (f.likeliest_score_prob * 100) | round(1) }}%)
+        </span>
+      </div>
+      <div class="bar">
+        <span class="h" style="width: {{ (f.prob_home * 100) | round(2) }}%"></span>
+        <span class="d" style="width: {{ (f.prob_draw * 100) | round(2) }}%"></span>
+        <span class="a" style="width: {{ (f.prob_away * 100) | round(2) }}%"></span>
+      </div>
+      <div class="legend">
+        <span><i class="swatch" style="background: var(--home)"></i>Home <b>{{ (f.prob_home * 100) | round(1) }}%</b></span>
+        <span><i class="swatch" style="background: var(--draw)"></i>Draw <b>{{ (f.prob_draw * 100) | round(1) }}%</b></span>
+        <span><i class="swatch" style="background: var(--away)"></i>Away <b>{{ (f.prob_away * 100) | round(1) }}%</b></span>
+      </div>
+    </article>
+    {% endfor %}
+  {% else %}
+    <div class="empty">
+      No predictions yet. Run <code>python scripts/ingest.py</code>, then restart the server.
+    </div>
+  {% endif %}
+
+  <footer>
+    <p>These are probabilistic estimates from historical results, not guarantees, and not betting advice.</p>
+    <p>Every match has three outcomes; the percentages sum to 100%.</p>
+    <p>Results and closing odds from <a href="https://www.football-data.co.uk/" style="color: var(--home)">football-data.co.uk</a>.</p>
+  </footer>
+</main>
+</body>
+</html>

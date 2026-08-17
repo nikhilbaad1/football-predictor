@@ -1,0 +1,4 @@
+from fpp.ingest.football_data_uk import ingest, ingest_frame, fetch_csv
+from fpp.ingest.teams import canonical_team_name
+
+__all__ = ["ingest", "ingest_frame", "fetch_csv", "canonical_team_name"]
