@@ -6,7 +6,16 @@ Project context for Claude Code. Read this before making changes.
 
 A football match prediction platform. The **primary goal is to learn and demonstrate agentic AI, RAG, and multi-agent engineering**; football prediction is the domain that makes it concrete. Where the two goals conflict, agent engineering wins.
 
-Current stage: **week 4.** The deterministic vertical slice is complete and frozen (ADR 0008), CI and the `PreToolUse` guardrail are in place (ADR 0009), and the forward-fixture feed landed (ADR 0010). Still no agents, no RAG, no ML. See `docs/PLAN.md` for the full roadmap.
+Current stage: **week 4.** The deterministic vertical slice is complete and frozen (ADR 0008), CI and the `PreToolUse` guardrail are in place (ADR 0009), the forward-fixture feed landed (ADR 0010), and the MCP tool layer is live (ADR 0011). Still no agents, no RAG, no ML. See `docs/PLAN.md` for the full roadmap.
+
+## MCP server
+
+`src/fpp/mcp_server/` exposes the database to Claude as five tools. Two rules govern changes to it:
+
+- **Logic goes in `tools.py`, which imports nothing from `mcp`.** That is what lets the whole tool layer be tested without an MCP client. `server.py` stays a thin adapter.
+- **The read-only connection is the security guarantee, not the `SELECT`-only keyword check in `run_sql`.** The `PreToolUse` hook inspects shell commands and cannot see an MCP call, so this layer has to hold by itself. Never add a tool that writes; ingest stays a CLI.
+
+Tool docstrings in `server.py` are what the model reads when choosing a tool — they are interface, not commentary. Say what a tool answers, when to prefer it, and what it will not do.
 
 ## Non-negotiables
 
@@ -34,6 +43,9 @@ src/fpp/
   evaluation/
     metrics.py       log-loss, Brier, calibration, de-vig
     backtest.py      walk-forward harness
+  mcp_server/
+    tools.py         the tools themselves — plain Python, no MCP imports
+    server.py        thin MCP adapter; docstrings here are the tool contract
   api.py            FastAPI app
 scripts/            CLI entry points (ingest, fixtures, backtest, predict)
 tests/              pytest; model math is verified against closed-form values

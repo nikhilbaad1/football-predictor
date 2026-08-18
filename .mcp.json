@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "football-predictor": {
+      "command": ".venv/Scripts/python.exe",
+      "args": ["-m", "fpp.mcp_server"]
+    }
+  }
+}
