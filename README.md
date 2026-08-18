@@ -2,7 +2,7 @@
 
 Match outcome prediction for Europe's top five leagues, using Elo and Dixon-Coles fitted on free historical data, evaluated honestly against the bookmaker's closing line.
 
-**Status: week 4 — deterministic models, a forward-fixture feed, an MCP tool layer, and CI plus guardrails. No agents yet.** This is the foundation for a multi-agent system; the roadmap is at the bottom.
+**Status: week 4 — deterministic models, a forward-fixture feed, an MCP tool layer, FPL player data, and CI plus guardrails. No agents yet.** This is the foundation for a multi-agent system; the roadmap is at the bottom.
 
 > Predictions are probabilistic estimates from historical results. Not guarantees, and not betting advice.
 
@@ -37,6 +37,7 @@ cp .env.example .env
 python scripts/ingest.py        # downloads ~10 seasons x 5 leagues, caches to data/raw/
 python scripts/backtest.py      # walk-forward evaluation vs the bookmaker
 python scripts/fixtures.py      # upcoming fixtures, predicted and recorded
+python scripts/fpl.py           # players + injury/availability snapshot
 uvicorn fpp.api:app --reload    # http://localhost:8000
 ```
 
@@ -58,6 +59,26 @@ La Liga — 2 fixture(s), 2 stored
 ```
 
 Stored predictions are locked once a match's date has passed. Re-running refreshes a fixture while it is still ahead, and refuses to touch it afterwards — a prediction that can be rewritten after the result is known is not evidence of anything. See [0010](docs/decisions/0010-forward-fixtures-and-locked-predictions.md).
+
+## Resolving clubs across sources
+
+Every source spells clubs differently. The results files say `Tottenham`, their own fixtures feed says `Atl. Madrid` where the results say `Ath Madrid`, and the FPL API says `Spurs`. Getting this wrong doesn't raise — it splits one club into two rows, and the model then rates a team it has never seen. That happened once already, and produced a 49.7% home probability for a side the market priced near 73%.
+
+Measured against FPL's 20 team names, the resolver settles 19 and **refuses the twentieth**:
+
+```
+$ python scripts/fpl.py --pending
+
+1 name(s) awaiting a decision:
+
+  [fpl/team] 'Coventry City'
+      No exact, alias, or head-word match. String similarity alone cannot say
+      whether this is a new club or a new spelling of an existing one.
+```
+
+`Hull City` → `Hull` and `Ipswich Town` → `Ipswich` resolve, because club-type suffixes say what kind of club it is rather than which one. `Coventry City` doesn't, and that is the point: any threshold loose enough to fix the first two also matches Coventry City to **Leicester City**. The two cases are not separable as text — what tells them apart is knowing which clubs exist. So the resolver reports what it cannot justify instead of inventing a link, and the unresolved club's players are skipped rather than attached to a guess. See [0012](docs/decisions/0012-resolution-refuses-to-guess.md).
+
+That queue is the entity-resolution agent's first job, with a baseline it has to beat: 19 of 20, zero wrong.
 
 ## Asking the database questions
 
@@ -159,7 +180,7 @@ The three bins holding two-thirds of the mass agree with observed frequency to w
 
 ## Data
 
-[football-data.co.uk](https://www.football-data.co.uk/data.php) — free CSVs, no key, no scraping, results plus closing odds from 15+ bookmakers back to 1993.
+[football-data.co.uk](https://www.football-data.co.uk/data.php) — free CSVs, no key, no scraping, results plus closing odds from 15+ bookmakers back to 1993. Player identity and availability come from the [Fantasy Premier League API](https://fantasy.premierleague.com/api/bootstrap-static/) — official, free, no key, and the only free source carrying injury and expected-availability data ([0002](docs/decisions/0002-premier-league-first.md)).
 
 Results and fixtures come from the same publisher, which keeps team names and date conventions consistent. Traps in this source, all handled and all tested:
 
@@ -172,14 +193,14 @@ Models train on all five leagues pooled and display one. Single-league data is ~
 
 ```
 src/fpp/
-  ingest/     football-data.co.uk results + fixtures, team-name normalization
+  ingest/     football-data.co.uk results + fixtures, FPL players, name resolution
   models/     elo.py, dixon_coles.py, blend.py
   evaluation/ metrics.py, backtest.py
   mcp_server/ MCP tools over the DB (read-only)
   api.py      FastAPI: JSON endpoints + one server-rendered page
-scripts/      ingest, backtest, predict, fixtures
+scripts/      ingest, backtest, predict, fixtures, fpl
 docs/decisions/  ADRs — why things are the way they are
-tests/        129 tests; model maths checked against closed-form values
+tests/        165 tests; model maths checked against closed-form values
 .github/workflows/  CI: lint, tests on 3.10 and 3.13, leakage check as its own job
 .claude/hooks/      PreToolUse guard: no pushes or merges to main, no destructive SQL
 ```
@@ -191,7 +212,7 @@ a prompt is not what makes them stop — see [0009](docs/decisions/0009-agent-gu
 ## Testing
 
 ```bash
-pytest tests/ -q     # 129 passed
+pytest tests/ -q     # 165 passed
 ```
 
 Tests assert against known truth, not stored snapshots. Synthetic data is generated from *known* team strengths, so the tests check that the model recovers them — a failure should always be explainable as "the model is now wrong about X", never "a number moved". The Elo update is checked against the closed-form 400-point/10:1 property; the Dixon-Coles `tau` against the paper's definition; the gradient against a numerical one.

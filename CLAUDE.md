@@ -35,6 +35,8 @@ src/fpp/
   ingest/
     football_data_uk.py   CSV ingester for football-data.co.uk results
     fixtures.py           upcoming-fixture feed from the same source
+    fpl.py                FPL players + dated availability snapshots
+    resolve.py            cross-source entity resolution; refuses to guess
     teams.py              team-name normalization across sources
   models/
     elo.py           Elo ratings + fitted Elo->1X2 mapping
@@ -80,7 +82,14 @@ Team names differ between the two feeds within this one source (results say `Ath
 
 **Predictions for future matches are locked once the match date passes** (`db.store_predictions`). Re-running refreshes a fixture while it is still ahead and refuses to touch it afterwards. Do not "fix" this — a prediction that can be rewritten after the result is known is not evidence of anything. See ADR 0010.
 
-Coming later (do not build yet): Fantasy Premier League API for injuries and expected minutes, Understat for xG, FBref for per-90 stats.
+**Players and availability** come from the Fantasy Premier League API (`https://fantasy.premierleague.com/api/bootstrap-static/`) — official, free, no key. Premier League only, so player features are single-league while match features stay pooled (ADR 0004). Two rules, both in ADR 0012:
+
+- **Availability is a dated time series, never a column on `players`.** A player injured today was available last week. One mutable "injured" flag makes every historical fit see today's knowledge, which is non-negotiable #1 violated in the quietest possible way.
+- **`fpl_id` is unique within a season, not across seasons.** Nothing depends on cross-season player identity yet; when it does, that is a separate resolution problem.
+
+**Entity resolution refuses to guess** (`ingest/resolve.py`). It tries exact, then the alias table, then a head-word match that ignores club-type suffixes (`Hull City` → `Hull`). Anything else goes to `name_resolutions` undecided and its players are skipped. Do not "improve" this by lowering a similarity threshold: the rule that resolves `Hull City` → `Hull` also matches `Coventry City` → `Leicester City`, and those two cases are not separable as text. A missing club is a visible gap; a merged one is silent corruption. Baseline to beat: 19 of 20 FPL names, zero wrong.
+
+Coming later (do not build yet): Understat for xG, FBref for per-90 stats.
 
 ## Training data policy
 
