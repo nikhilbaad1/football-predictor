@@ -19,3 +19,4 @@ Format: numbered, short, present tense. Status is `accepted`, `superseded by NNN
 | [0007](0007-squad-similarity-is-sql.md) | Squad similarity is SQL, not a vector index | accepted |
 | [0008](0008-freeze-the-deterministic-baseline.md) | Freeze the deterministic baseline; don't tune the gap away | accepted |
 | [0009](0009-agent-guardrails-are-structural.md) | Agent guardrails are structural, not prompted | accepted |
+| [0010](0010-forward-fixtures-and-locked-predictions.md) | Forward fixtures from the same source; predictions locked at kick-off | accepted |

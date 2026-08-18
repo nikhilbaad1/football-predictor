@@ -2,7 +2,7 @@
 
 Match outcome prediction for Europe's top five leagues, using Elo and Dixon-Coles fitted on free historical data, evaluated honestly against the bookmaker's closing line.
 
-**Status: week 1–3 slice — deterministic models, no agents yet.** This is the foundation for a multi-agent system; the roadmap is at the bottom.
+**Status: week 4 — deterministic models, a forward-fixture feed, and CI plus guardrails. No agents yet.** This is the foundation for a multi-agent system; the roadmap is at the bottom.
 
 > Predictions are probabilistic estimates from historical results. Not guarantees, and not betting advice.
 
@@ -36,10 +36,28 @@ cp .env.example .env
 
 python scripts/ingest.py        # downloads ~10 seasons x 5 leagues, caches to data/raw/
 python scripts/backtest.py      # walk-forward evaluation vs the bookmaker
+python scripts/fixtures.py      # upcoming fixtures, predicted and recorded
 uvicorn fpp.api:app --reload    # http://localhost:8000
 ```
 
-Ingest takes a few minutes on first run and is instant afterwards — files are cached and never re-fetched.
+Ingest takes a few minutes on first run and is instant afterwards — files are cached and never re-fetched. `fixtures.py` is the exception and deliberately never caches: matches get postponed and rescheduled, so a stale fixture list is worse than none. Run it on a schedule.
+
+## Predicting forward
+
+A backtest grades a model against data that already existed when the model was written. `scripts/fixtures.py` pulls the coming week's fixtures, predicts them, and writes those probabilities to the database **before the matches are played**:
+
+```
+$ python scripts/fixtures.py --division SP1
+
+new fixtures: SP1 2
+
+La Liga — 2 fixture(s), 2 stored
+
+  2026-08-19  Atletico Madrid          v Malaga       64.1% / 21.7% / 14.2%
+  2026-08-20  Rayo Vallecano           v Alaves       47.4% / 28.2% / 24.3%
+```
+
+Stored predictions are locked once a match's date has passed. Re-running refreshes a fixture while it is still ahead, and refuses to touch it afterwards — a prediction that can be rewritten after the result is known is not evidence of anything. See [0010](docs/decisions/0010-forward-fixtures-and-locked-predictions.md).
 
 ## How it works
 
@@ -123,7 +141,7 @@ The three bins holding two-thirds of the mass agree with observed frequency to w
 
 [football-data.co.uk](https://www.football-data.co.uk/data.php) — free CSVs, no key, no scraping, results plus closing odds from 15+ bookmakers back to 1993.
 
-Two traps in this source, both handled and both tested:
+Results and fixtures come from the same publisher, which keeps team names and date conventions consistent. Traps in this source, all handled and all tested:
 
 - Dates are `dd/mm/yyyy`. Parsed without `dayfirst=True`, `05/08/2024` becomes 8 May and the whole dataset silently reorders.
 - `B365H` is the **opening** price; the closing line is `B365CH`. Only closing odds are stored, so the opening price cannot be used by accident.
@@ -134,13 +152,13 @@ Models train on all five leagues pooled and display one. Single-league data is ~
 
 ```
 src/fpp/
-  ingest/     football-data.co.uk CSVs, team-name normalization
+  ingest/     football-data.co.uk results + fixtures, team-name normalization
   models/     elo.py, dixon_coles.py, blend.py
   evaluation/ metrics.py, backtest.py
   api.py      FastAPI: JSON endpoints + one server-rendered page
-scripts/      ingest, backtest, predict
+scripts/      ingest, backtest, predict, fixtures
 docs/decisions/  ADRs — why things are the way they are
-tests/        74 tests; model maths checked against closed-form values
+tests/        98 tests; model maths checked against closed-form values
 .github/workflows/  CI: lint, tests on 3.10 and 3.13, leakage check as its own job
 .claude/hooks/      PreToolUse guard: no pushes or merges to main, no destructive SQL
 ```
@@ -152,7 +170,7 @@ a prompt is not what makes them stop — see [0009](docs/decisions/0009-agent-gu
 ## Testing
 
 ```bash
-pytest tests/ -q     # 74 passed
+pytest tests/ -q     # 98 passed
 ```
 
 Tests assert against known truth, not stored snapshots. Synthetic data is generated from *known* team strengths, so the tests check that the model recovers them — a failure should always be explainable as "the model is now wrong about X", never "a number moved". The Elo update is checked against the closed-form 400-point/10:1 property; the Dixon-Coles `tau` against the paper's definition; the gradient against a numerical one.
@@ -169,7 +187,8 @@ See [`docs/decisions/`](docs/decisions/). Some that shaped this:
 ## Known limitations
 
 - **The bookmaker baseline covers 2019/20 onward only** — 2,660 of the 3,381 scored matches. Closing-odds columns do not exist in the earlier CSVs, so the headline benchmark rests on seven seasons, not nine. Any comparison against it inherits that window.
-- **No forward fixtures.** football-data.co.uk publishes results, not upcoming fixtures, so the landing page currently demonstrates on notable pairings. A fixtures feed is the first item in week 4.
+- **Fixture lookahead is about a week.** The feed covers roughly the next seven days, so between rounds and before a season opens there is genuinely nothing scheduled and the page falls back to illustrative pairings, labelled as such. Full-season schedules from OpenFootball wait on the entity-resolution agent, which is the right owner for a second source's team names ([0010](docs/decisions/0010-forward-fixtures-and-locked-predictions.md)).
+- **Predictions can still be refreshed on match day.** They are locked once the match *date* has passed, not once the whistle blows — kick-off time is in the feed but not stored.
 - **No player-level model yet.** Goal probability, ratings, and head-to-head form are weeks 7–12.
 - **De-vigging is multiplicative**, which removes margin evenly across outcomes. Real books load more onto longshots, so this slightly overstates unlikely outcomes. Shin's method would be more accurate if the baseline comparison becomes load-bearing.
 - **Blend weights are a prior, not fitted.**

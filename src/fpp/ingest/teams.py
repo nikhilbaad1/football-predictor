@@ -34,7 +34,12 @@ ALIASES: dict[str, str] = {
     "brighton": "Brighton & Hove Albion",
     "qpr": "Queens Park Rangers",
     # Spain
+    # The fixtures feed and the season files disagree here: results say
+    # "Ath Madrid", fixtures say "Atl. Madrid". Missing this split the club in
+    # two and produced a confident prediction for a team with no history.
     "ath madrid": "Atletico Madrid",
+    "atl. madrid": "Atletico Madrid",
+    "atl madrid": "Atletico Madrid",
     "atletico madrid": "Atletico Madrid",
     "ath bilbao": "Athletic Bilbao",
     "espanol": "Espanyol",

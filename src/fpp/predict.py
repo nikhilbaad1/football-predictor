@@ -29,6 +29,10 @@ class Fixture:
     home_team: str
     away_team: str
     match_date: date | None = None
+    # Set when the fixture came from the database. Ad-hoc predictions for a
+    # pairing that is not a scheduled match leave it None, and those are never
+    # stored — there is nothing to grade them against.
+    match_id: int | None = None
 
 
 def fit_models(
@@ -64,6 +68,7 @@ def predict_fixtures(
         lam, mu = dc.rates(f.home_team, f.away_team)
         rows.append(
             {
+                "match_id": f.match_id,
                 "match_date": f.match_date,
                 "home_team": f.home_team,
                 "away_team": f.away_team,
@@ -80,8 +85,25 @@ def predict_fixtures(
     return pd.DataFrame(rows)
 
 
-def predict_upcoming(division: str = DISPLAY_DIVISION) -> pd.DataFrame:
-    """Predict every unplayed fixture in the DB for one division.
+def upcoming_fixtures(
+    division: str = DISPLAY_DIVISION, today: date | None = None
+) -> pd.DataFrame:
+    """Unplayed fixtures for one division, from today forward.
+
+    The date filter is not cosmetic. Postponed matches leave unplayed rows in
+    the past that will never resolve, and predicting those would fill the page
+    with fixtures that already came and went.
+    """
+    today = today or date.today()
+    upcoming = load_matches(divisions=[division], played_only=False)
+    upcoming = upcoming[upcoming["result"].isna()]
+    return upcoming[upcoming["match_date"] >= today].sort_values(["match_date", "home_team"])
+
+
+def predict_upcoming(
+    division: str = DISPLAY_DIVISION, today: date | None = None
+) -> pd.DataFrame:
+    """Predict every scheduled fixture in the DB for one division.
 
     Trains on the pooled top-5 leagues (ADR 0004) but returns only `division`.
     """
@@ -89,21 +111,19 @@ def predict_upcoming(division: str = DISPLAY_DIVISION) -> pd.DataFrame:
     if played.empty:
         raise RuntimeError("no matches in the database — run scripts/ingest.py first")
 
-    upcoming = load_matches(divisions=[division], played_only=False)
-    upcoming = upcoming[upcoming["result"].isna()]
-
+    upcoming = upcoming_fixtures(division, today)
     if upcoming.empty:
         log.warning(
-            "no unplayed fixtures for %s. football-data.co.uk publishes results, "
-            "not forward fixtures — use scripts/predict.py with explicit team names, "
-            "or add a fixtures source.",
+            "no scheduled fixtures for %s. The feed covers about a week ahead, so "
+            "it is empty between rounds and before a season starts — run "
+            "scripts/fixtures.py to refresh it.",
             division,
         )
         return pd.DataFrame()
 
-    elo, dc = fit_models(played)
+    elo, dc = fit_models(played, reference_date=today)
     fixtures = [
-        Fixture(r.home_team, r.away_team, r.match_date)
+        Fixture(r.home_team, r.away_team, r.match_date, r.match_id)
         for r in upcoming.itertuples(index=False)
     ]
     return predict_fixtures(fixtures, elo, dc)
