@@ -37,7 +37,9 @@ def _generate(n_rounds: int, seed: int = 42) -> pd.DataFrame:
             for away in teams:
                 if home == away:
                     continue
-                lam = BASE_RATE * np.exp(TRUE_STRENGTHS[home] - TRUE_STRENGTHS[away] + TRUE_HOME_ADV)
+                lam = BASE_RATE * np.exp(
+                    TRUE_STRENGTHS[home] - TRUE_STRENGTHS[away] + TRUE_HOME_ADV
+                )
                 mu = BASE_RATE * np.exp(TRUE_STRENGTHS[away] - TRUE_STRENGTHS[home])
                 hg, ag = int(rng.poisson(lam)), int(rng.poisson(mu))
                 rows.append(

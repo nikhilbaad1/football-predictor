@@ -106,8 +106,8 @@ class DixonColesModel:
         shift = att.mean()  # exact re-centring; lambda and mu are unchanged
         att, dfn = att - shift, dfn - shift
 
-        self.attack = dict(zip(self.teams, att))
-        self.defence = dict(zip(self.teams, dfn))
+        self.attack = dict(zip(self.teams, att, strict=True))
+        self.defence = dict(zip(self.teams, dfn, strict=True))
         self.home_advantage = float(result.x[2 * n])
         self.rho = float(result.x[2 * n + 1])
         self.converged = bool(result.success)

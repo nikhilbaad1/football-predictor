@@ -14,13 +14,16 @@ Given a fixture, it returns three probabilities that sum to 1 — home win, draw
 $ python scripts/predict.py "Arsenal" "Chelsea"
 
 Arsenal v Chelsea
-  home win   54.9%
-  draw       21.6%
-  away win   23.5%
+  home win   67.1%
+  draw       20.9%
+  away win   11.9%
 
-  expected goals  1.94 - 1.27
-  likeliest score 1-1 (10.3%)
-  elo  1913 v 1810
+  expected goals  1.98 - 0.74
+  likeliest score 2-0 (12.9%)
+
+  elo  1913 v 1636
+
+  Probabilistic estimate, not betting advice.
 ```
 
 There is no "win probability" scalar anywhere. Roughly a quarter of top-league matches are draws, and a model that collapses to two outcomes misprices essentially everything.
@@ -69,24 +72,50 @@ Three baselines, all of which must be beaten or explained:
 | Base rate | Constant at observed frequencies. Deliberately handed the answer key — failing to beat it means nothing was learned. |
 | **Bookmaker** | De-vigged closing odds. The real benchmark. |
 
-### Sample output
+### Results
+
+Premier League matches from 2017-09 to 2026-05, walk-forward, models fitted on all five leagues pooled. Initial train 2,000 matches, refit every 40.
 
 ```
               model    n  log_loss  brier    ece  accuracy
-                elo 2508    0.8653 0.5012 0.0165    0.6304
-        dixon_coles 2508    0.8639 0.5013 0.0052    0.6300
-              blend 2508    0.8624 0.5001 0.0066    0.6292
- baseline_base_rate 2508    1.0333 0.6250 0.0000    0.4737
- baseline_bookmaker 2485    0.8580 0.4972 0.0042    0.6266
-blend (odds subset) 2485    0.8685 0.5040 0.0067    0.6262
+                elo 3381    0.9774 0.5802 0.0171    0.5350
+        dixon_coles 3381    0.9765 0.5777 0.0095    0.5413
+              blend 3381    0.9710 0.5763 0.0113    0.5368
+ baseline_base_rate 3381    1.0661 0.6451 0.0000    0.4413
+ baseline_bookmaker 2660    0.9639 0.5717 0.0047    0.5496
+blend (odds subset) 2660    0.9826 0.5844 0.0114    0.5293
 
-gap to bookmaker: +0.0106 log-loss
+gap to bookmaker: +0.0188 log-loss
   Behind the closing line, as expected.
 ```
 
-**These specific numbers came from synthetic data** generated to exercise the pipeline (the sandbox this was built in had no network access to football-data.co.uk). The signal in that data is cleaner than reality, so real log-loss will be higher — expect roughly 0.96–0.99 for a top league, against a bookmaker around 0.95–0.97. Run `scripts/backtest.py` yourself for the real figures and replace this table.
+Reproduce with `python scripts/backtest.py`. The blend beats base rates by 0.095 log-loss, sits 0.019 behind the de-vigged closing line, and is calibrated to within 0.011 ECE. Dixon-Coles calibrates better than Elo (0.010 vs 0.017), the expected consequence of modelling scorelines directly instead of fitting a mapping from rating difference.
 
-What the shape of it shows: the model comfortably beats base rates, sits slightly behind the closing line, and is well calibrated. Dixon-Coles calibrates better than Elo (ECE 0.005 vs 0.017), which is the expected consequence of modelling scorelines directly.
+Accuracy, on the 2,660 matches both are scored on, is 52.9% for the blend against the bookmaker's 55.0%. Both are far below the 63% the synthetic development data suggested — 53% is the right order of magnitude for real top-flight football, and a reminder of why accuracy is not the headline metric.
+
+**Calibration** (blend, pooled across the three outcomes):
+
+```
+    bin    n  predicted  observed    gap
+0.0-0.1  543      0.064     0.087 -0.022
+0.1-0.2 1596      0.156     0.165 -0.009
+0.2-0.3 3731      0.254     0.256 -0.003
+0.3-0.4 1343      0.345     0.357 -0.012
+0.4-0.5 1040      0.448     0.412  0.036
+0.5-0.6  772      0.548     0.539  0.009
+0.6-0.7  572      0.649     0.654 -0.005
+0.7-0.8  355      0.747     0.713  0.034
+0.8-0.9  169      0.839     0.852 -0.013
+0.9-1.0   22      0.916     0.864  0.052
+```
+
+The three bins holding two-thirds of the mass agree with observed frequency to within 0.01. The visibly worse bins are the thin ones — 0.9-1.0 has 22 observations, where a gap of 0.05 is one match.
+
+### Reading the results table
+
+**Why `blend (odds subset)` scores worse than `blend`.** This source carries closing odds only from 2019/20 onward, so the 721 matches without them are seasons 2017/18 and 2018/19 — and 2018/19 was the most predictable season in the window (blend log-loss 0.898 against a 0.971 average). The subset is a harder sample, not a different model. The gap is computed on the subset precisely because it is the only comparison where both sides are scored on the same matches.
+
+**The gap does not close as training data accumulates.** Per season it runs 0.005, 0.024, 0.018, 0.026, 0.027, 0.013, 0.016 — no trend, over a stretch where the pooled training set roughly triples. So the distance to the closing line is not a sample-size problem, and it will not be tuned away. It is information these models cannot see: lineups, injuries, xG, rest days. That is the case for the later phases, now measured rather than assumed.
 
 **We do not expect to beat the bookmaker.** Closing odds aggregate an enormous amount of information and are the hardest benchmark in the field. If the gap ever goes negative, the first hypothesis is a leakage bug, not an edge.
 
@@ -112,7 +141,13 @@ src/fpp/
 scripts/      ingest, backtest, predict
 docs/decisions/  ADRs — why things are the way they are
 tests/        74 tests; model maths checked against closed-form values
+.github/workflows/  CI: lint, tests on 3.10 and 3.13, leakage check as its own job
+.claude/hooks/      PreToolUse guard: no pushes or merges to main, no destructive SQL
 ```
+
+Work reaches `main` through a pull request. That is enforced by the hook rather than
+by convention, because the agents arriving in phase 2 are supposed to stop at a PR and
+a prompt is not what makes them stop — see [0009](docs/decisions/0009-agent-guardrails-are-structural.md).
 
 ## Testing
 
@@ -129,9 +164,11 @@ See [`docs/decisions/`](docs/decisions/). Some that shaped this:
 - [0002](docs/decisions/0002-premier-league-first.md) — Premier League before La Liga, because the FPL API is the only free source with injury and expected-availability data.
 - [0003](docs/decisions/0003-sql-for-structured-rag-for-text.md) — RAG is for unstructured text, not for the match database. Embedding rows to retrieve them by cosine similarity converts an exact lookup into an approximate one.
 - [0007](docs/decisions/0007-squad-similarity-is-sql.md) — cosine similarity between two one-hot starting XIs is `shared/11`. That's a join and a count, not a vector index.
+- [0008](docs/decisions/0008-freeze-the-deterministic-baseline.md) — the deterministic baseline is frozen at the numbers above. The gap to the closing line is stable across seasons, so closing it by tuning would be overfitting, not progress.
 
 ## Known limitations
 
+- **The bookmaker baseline covers 2019/20 onward only** — 2,660 of the 3,381 scored matches. Closing-odds columns do not exist in the earlier CSVs, so the headline benchmark rests on seven seasons, not nine. Any comparison against it inherits that window.
 - **No forward fixtures.** football-data.co.uk publishes results, not upcoming fixtures, so the landing page currently demonstrates on notable pairings. A fixtures feed is the first item in week 4.
 - **No player-level model yet.** Goal probability, ratings, and head-to-head form are weeks 7–12.
 - **De-vigging is multiplicative**, which removes margin evenly across outcomes. Real books load more onto longshots, so this slightly overstates unlikely outcomes. Shin's method would be more accurate if the baseline comparison becomes load-bearing.

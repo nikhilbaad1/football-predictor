@@ -29,7 +29,7 @@ def blend(probas: list[np.ndarray], weights: list[float] | None = None) -> np.nd
         raise ValueError("weights and probas differ in length")
     w = w / w.sum()
 
-    out = sum(wi * p for wi, p in zip(w, probas))
+    out = sum(wi * p for wi, p in zip(w, probas, strict=True))
     return out / out.sum(axis=1, keepdims=True)
 
 
