@@ -2,7 +2,7 @@
 
 Match outcome prediction for Europe's top five leagues, using Elo and Dixon-Coles fitted on free historical data, evaluated honestly against the bookmaker's closing line.
 
-**Status: week 4 — deterministic models, a forward-fixture feed, and CI plus guardrails. No agents yet.** This is the foundation for a multi-agent system; the roadmap is at the bottom.
+**Status: week 4 — deterministic models, a forward-fixture feed, an MCP tool layer, and CI plus guardrails. No agents yet.** This is the foundation for a multi-agent system; the roadmap is at the bottom.
 
 > Predictions are probabilistic estimates from historical results. Not guarantees, and not betting advice.
 
@@ -58,6 +58,26 @@ La Liga — 2 fixture(s), 2 stored
 ```
 
 Stored predictions are locked once a match's date has passed. Re-running refreshes a fixture while it is still ahead, and refuses to touch it afterwards — a prediction that can be rewritten after the result is known is not evidence of anything. See [0010](docs/decisions/0010-forward-fixtures-and-locked-predictions.md).
+
+## Asking the database questions
+
+An MCP server exposes the data to Claude as tools. `.mcp.json` is checked in, so Claude Code connects automatically — on macOS or Linux change the interpreter path to `.venv/bin/python`.
+
+| Tool | Answers |
+|---|---|
+| `predict_match` | Three-way probabilities for any pairing, real or hypothetical |
+| `get_upcoming_fixtures` | Scheduled fixtures and the predictions locked in before kick-off |
+| `get_head_to_head` | Past meetings, with de-vigged closing prices where they exist |
+| `get_team_form` | Recent results and current Elo for one club |
+| `run_sql` | Read-only escape hatch for what the four don't cover |
+
+Four purposeful tools rather than one `execute_sql`, because a raw-SQL tool pushes schema knowledge onto the caller, makes every call a possible table scan, and leaves nothing to evaluate. Team names resolve through the alias table, and an unknown one comes back as `No team called 'Arsenl'. Closest matches: Arsenal.` — an error you can act on beats a separate lookup tool.
+
+**The server cannot write.** The connection is opened read-only, so a write fails inside the driver. That matters because the `PreToolUse` guardrail inspects shell commands and cannot see an MCP call — this layer has to hold on its own. See [0011](docs/decisions/0011-mcp-tools-over-raw-sql.md).
+
+```bash
+python -m fpp.mcp_server    # stdio, which is how Claude Code connects
+```
 
 ## How it works
 
@@ -155,10 +175,11 @@ src/fpp/
   ingest/     football-data.co.uk results + fixtures, team-name normalization
   models/     elo.py, dixon_coles.py, blend.py
   evaluation/ metrics.py, backtest.py
+  mcp_server/ MCP tools over the DB (read-only)
   api.py      FastAPI: JSON endpoints + one server-rendered page
 scripts/      ingest, backtest, predict, fixtures
 docs/decisions/  ADRs — why things are the way they are
-tests/        98 tests; model maths checked against closed-form values
+tests/        129 tests; model maths checked against closed-form values
 .github/workflows/  CI: lint, tests on 3.10 and 3.13, leakage check as its own job
 .claude/hooks/      PreToolUse guard: no pushes or merges to main, no destructive SQL
 ```
@@ -170,7 +191,7 @@ a prompt is not what makes them stop — see [0009](docs/decisions/0009-agent-gu
 ## Testing
 
 ```bash
-pytest tests/ -q     # 98 passed
+pytest tests/ -q     # 129 passed
 ```
 
 Tests assert against known truth, not stored snapshots. Synthetic data is generated from *known* team strengths, so the tests check that the model recovers them — a failure should always be explainable as "the model is now wrong about X", never "a number moved". The Elo update is checked against the closed-form 400-point/10:1 property; the Dixon-Coles `tau` against the paper's definition; the gradient against a numerical one.
@@ -199,7 +220,7 @@ See [`docs/decisions/`](docs/decisions/). Some that shaped this:
 | Phase | Scope |
 |---|---|
 | **1 (done)** | Ingestion, Elo + Dixon-Coles, evaluation harness, API and page |
-| 2 | MCP server over the DB; ingestion/entity-resolution agent; maintenance agent on GitHub Actions |
+| 2 | MCP server over the DB (done); ingestion/entity-resolution agent; maintenance agent on GitHub Actions |
 | 3 | RAG over football news and match reports; hybrid retrieval; Ragas evals in CI |
 | 4 | Gradient-boosted ensemble and player models, built by an experimentation agent under an evaluator-optimizer loop |
 | 5 | Scraper-repair agent, more leagues, deployment |
