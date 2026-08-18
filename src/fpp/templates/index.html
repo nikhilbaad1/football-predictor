@@ -42,6 +42,13 @@
   }
   footer p { margin: .35rem 0; }
   .empty { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 2rem; text-align: center; color: var(--muted); }
+  .notice {
+    background: var(--panel); border: 1px solid var(--line);
+    border-left: 3px solid var(--draw); border-radius: 8px;
+    padding: .9rem 1.1rem; margin-bottom: 1.25rem;
+    color: var(--muted); font-size: .875rem;
+  }
+  .notice strong { color: var(--text); }
   code { background: #0b0d11; padding: .15rem .4rem; border-radius: 4px; font-size: .85em; }
 </style>
 </head>
@@ -53,12 +60,22 @@
     Model <code>{{ model_version }}</code>.
   </p>
 
+  {% if illustrative %}
+    <div class="notice">
+      <strong>No fixtures scheduled right now.</strong>
+      The source publishes about a week ahead, so this is normal between rounds and
+      before a season starts. The matches below are <em>illustrative pairings</em>
+      between highly rated sides — not real upcoming fixtures.
+    </div>
+  {% endif %}
+
   {% if fixtures %}
     {% for f in fixtures %}
     <article class="match">
       <div class="teams">
         <strong>{{ f.home_team }} v {{ f.away_team }}</strong>
         <span class="score">
+          {% if f.match_date %}{{ f.match_date }} · {% endif %}
           xG {{ f.expected_goals_home }}–{{ f.expected_goals_away }} ·
           likeliest {{ f.likeliest_score }} ({{ (f.likeliest_score_prob * 100) | round(1) }}%)
         </span>

@@ -39,7 +39,14 @@ SQL_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bTRUNCATE\b", re.I), "TRUNCATE"),
     (re.compile(r"\bALTER\s+TABLE\b.*\bDROP\b", re.I | re.S), "ALTER TABLE ... DROP"),
     (re.compile(r"\bDELETE\s+FROM\b(?!.*\bWHERE\b)", re.I | re.S), "DELETE without WHERE"),
-    (re.compile(r"\bUPDATE\b.+?\bSET\b(?!.*\bWHERE\b)", re.I | re.S), "UPDATE without WHERE"),
+    # The lookbehind exempts `ON CONFLICT ... DO UPDATE SET`, which is an upsert
+    # and has no WHERE by definition. This codebase uses that form in three
+    # places; blocking it was a false positive, and a guard that blocks ordinary
+    # work is a guard that gets switched off (ADR 0009).
+    (
+        re.compile(r"(?<!DO )\bUPDATE\b.+?\bSET\b(?!.*\bWHERE\b)", re.I | re.S),
+        "UPDATE without WHERE",
+    ),
 ]
 
 # Commands that only read. Searching the codebase for the string "DROP TABLE"
@@ -122,8 +129,12 @@ def check_git(segment: str) -> None:
 def check_sql(segment: str) -> None:
     if READ_ONLY.match(segment):
         return
+    # Collapse whitespace first: SQL in this project is written across several
+    # lines, and the DO-UPDATE lookbehind is fixed-width so it only works
+    # against a single space.
+    normalized = " ".join(segment.split())
     for pattern, label in SQL_PATTERNS:
-        if pattern.search(segment):
+        if pattern.search(normalized):
             deny(
                 f"Blocked: destructive SQL ({label}). The match database is rebuilt by "
                 f"re-ingesting, not by editing in place — re-run scripts/ingest.py. If "
@@ -156,6 +167,13 @@ SELFTEST = [
     ('sqlite3 data/football.db "DELETE FROM matches WHERE id = 1"', False),
     ('sqlite3 data/football.db "SELECT count(*) FROM matches"', False),
     ('grep -rn "DROP TABLE" src/', False),
+    ('sqlite3 db "UPDATE matches SET result = NULL"', True),
+    ('sqlite3 db "UPDATE matches SET result = \'H\' WHERE id = 1"', False),
+    # Upserts. Every ingester in this project ends with one of these, spread
+    # over several lines; treating them as unqualified UPDATEs blocked ordinary
+    # work until the DO-UPDATE exemption landed.
+    ('python -c "ON CONFLICT (id) DO UPDATE SET result = NULL"', False),
+    ('python -c "ON CONFLICT (id)\n  DO UPDATE SET\n  home_goals = excluded.home_goals"', False),
 ]
 
 

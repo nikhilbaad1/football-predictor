@@ -6,7 +6,7 @@ Project context for Claude Code. Read this before making changes.
 
 A football match prediction platform. The **primary goal is to learn and demonstrate agentic AI, RAG, and multi-agent engineering**; football prediction is the domain that makes it concrete. Where the two goals conflict, agent engineering wins.
 
-Current stage: **weeks 1–3, the deterministic vertical slice.** No agents, no RAG, no ML yet. See `docs/PLAN.md` for the full roadmap.
+Current stage: **week 4.** The deterministic vertical slice is complete and frozen (ADR 0008), CI and the `PreToolUse` guardrail are in place (ADR 0009), and the forward-fixture feed landed (ADR 0010). Still no agents, no RAG, no ML. See `docs/PLAN.md` for the full roadmap.
 
 ## Non-negotiables
 
@@ -24,7 +24,8 @@ src/fpp/
   db.py             SQLAlchemy engine + schema helpers
   schema.sql        table definitions (SQLite/Postgres compatible)
   ingest/
-    football_data_uk.py   CSV ingester for football-data.co.uk
+    football_data_uk.py   CSV ingester for football-data.co.uk results
+    fixtures.py           upcoming-fixture feed from the same source
     teams.py              team-name normalization across sources
   models/
     elo.py           Elo ratings + fitted Elo->1X2 mapping
@@ -34,7 +35,7 @@ src/fpp/
     metrics.py       log-loss, Brier, calibration, de-vig
     backtest.py      walk-forward harness
   api.py            FastAPI app
-scripts/            CLI entry points (init_db, ingest, backtest, predict, serve)
+scripts/            CLI entry points (ingest, fixtures, backtest, predict)
 tests/              pytest; model math is verified against closed-form values
 ```
 
@@ -54,6 +55,18 @@ Column notes that are easy to get wrong:
 - `FTHG` / `FTAG` are full-time goals; `FTR` is `H`/`D`/`A`.
 - `B365H`/`B365D`/`B365A` are **opening** odds. The closing odds carry a `C`: `B365CH`, `B365CD`, `B365CA`. **Use closing odds** — they are the informed benchmark. `AvgCH`/`AvgCD`/`AvgCA` are the market average and are preferable when present.
 - Older seasons are missing many columns. Never assume a column exists.
+- Closing odds only exist from 2019/20 onward. The bookmaker benchmark therefore covers part of the history, not all of it.
+
+**Upcoming fixtures** come from `https://www.football-data.co.uk/fixtures.csv` — one file, all divisions, about a week ahead. It is shaped differently from the season files in four ways, each a silent failure rather than an error:
+
+- It is **UTF-8 with a BOM**. Read it as `latin-1` like the season files and the first column is not `Div`, so the division filter matches nothing and the ingest quietly does nothing.
+- There is **no season column**. Derive it with `config.season_code`, which must agree with how the source names its results files, or a fixture never reconciles with its own result.
+- There are **no closing odds** — the C-suffixed columns are present but empty. Do not store the opening prices that *are* present.
+- Fixtures **must be inserted with `ON CONFLICT DO NOTHING`**, never `DO UPDATE`. They share a uniqueness key with results, and the upsert pattern used by the results ingester would write NULLs over finished matches.
+
+Team names differ between the two feeds within this one source (results say `Ath Madrid`, fixtures say `Atl. Madrid`). Unaliased, that splits a club in two and produces a confident, meaningless prediction. `scripts/fixtures.py` warns about teams with no match history; treat that warning as a probable alias gap, not a promoted club, until checked.
+
+**Predictions for future matches are locked once the match date passes** (`db.store_predictions`). Re-running refreshes a fixture while it is still ahead and refuses to touch it afterwards. Do not "fix" this — a prediction that can be rewritten after the result is known is not evidence of anything. See ADR 0010.
 
 Coming later (do not build yet): Fantasy Premier League API for injuries and expected minutes, Understat for xG, FBref for per-90 stats.
 

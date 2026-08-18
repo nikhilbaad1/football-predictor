@@ -22,12 +22,25 @@ from fastapi.templating import Jinja2Templates
 
 from fpp.config import DISPLAY_DIVISION, DIVISIONS
 from fpp.db import load_matches
-from fpp.predict import MODEL_VERSION, Fixture, fit_models, predict_fixtures
+from fpp.predict import (
+    MODEL_VERSION,
+    Fixture,
+    fit_models,
+    predict_fixtures,
+    upcoming_fixtures,
+)
 
 log = logging.getLogger(__name__)
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
-STATE: dict = {"elo": None, "dc": None, "teams": [], "fitted_at": None, "n_train": 0}
+STATE: dict = {
+    "elo": None,
+    "dc": None,
+    "teams": [],
+    "fitted_at": None,
+    "n_train": 0,
+    "fixtures": [],
+}
 
 
 @asynccontextmanager
@@ -41,20 +54,44 @@ async def lifespan(app: FastAPI):
             display_teams = load_matches(divisions=[DISPLAY_DIVISION], played_only=True)
             recent_season = display_teams["season"].max()
             recent = display_teams[display_teams["season"] == recent_season]
+            scheduled = upcoming_fixtures(DISPLAY_DIVISION)
             STATE.update(
                 elo=elo,
                 dc=dc,
                 teams=sorted(set(recent["home_team"]) | set(recent["away_team"])),
                 fitted_at=date.today(),
                 n_train=len(played),
+                fixtures=[
+                    Fixture(r.home_team, r.away_team, r.match_date, r.match_id)
+                    for r in scheduled.itertuples(index=False)
+                ],
             )
-            log.info("fitted on %s matches, %s display teams", len(played), len(STATE["teams"]))
+            log.info(
+                "fitted on %s matches, %s display teams, %s scheduled fixtures",
+                len(played), len(STATE["teams"]), len(STATE["fixtures"]),
+            )
     except Exception as exc:
         log.exception("startup fit failed: %s", exc)
     yield
 
 
 app = FastAPI(title="Football Predictor", version=MODEL_VERSION, lifespan=lifespan)
+
+
+def _predict_state_fixtures() -> list[dict]:
+    """Probabilities for the fixtures loaded at startup.
+
+    Computed from the in-memory fit rather than read back from the predictions
+    table. The table is the durable record that scripts/fixtures.py locks before
+    kick-off and that grading uses later; this is the view. Both run the same
+    MODEL_VERSION, so they agree unless the data moved between the two runs.
+    """
+    if not STATE["fixtures"]:
+        return []
+    df = predict_fixtures(STATE["fixtures"], STATE["elo"], STATE["dc"])
+    df = df.copy()
+    df["match_date"] = df["match_date"].astype(str)
+    return df.to_dict("records")
 
 
 def _require_models():
@@ -93,11 +130,33 @@ def predict(
 
     df = predict_fixtures([Fixture(home, away)], STATE["elo"], STATE["dc"])
     row = df.iloc[0].to_dict()
+    # Ad-hoc pairing, not a scheduled match: neither field means anything here,
+    # and a null match_id in the response would imply one was expected.
     row.pop("match_date", None)
+    row.pop("match_id", None)
     row["note"] = (
         "Probabilistic estimate from historical results. Not betting advice."
     )
     return row
+
+
+@app.get("/api/fixtures")
+def fixtures() -> dict:
+    """Scheduled fixtures for the displayed division, with probabilities.
+
+    Empty is a normal answer, not an error. The source publishes about a week
+    ahead, so between rounds and before a season starts there is genuinely
+    nothing scheduled. Refresh with scripts/fixtures.py.
+    """
+    _require_models()
+    rows = _predict_state_fixtures()
+    return {
+        "division": DIVISIONS[DISPLAY_DIVISION],
+        "model_version": MODEL_VERSION,
+        "count": len(rows),
+        "fixtures": rows,
+        "note": "Probabilistic estimates from historical results. Not betting advice.",
+    }
 
 
 @app.get("/api/ratings")
@@ -117,25 +176,33 @@ def ratings(limit: int = 30) -> dict:
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
-    """The week 1-3 deliverable: one page, real probabilities."""
+    """One page, real probabilities for real scheduled fixtures."""
     fixtures: list[dict] = []
-    if STATE["elo"] is not None and len(STATE["teams"]) >= 2:
-        teams = STATE["teams"]
-        elo = STATE["elo"]
-        ranked = sorted(teams, key=elo.rating, reverse=True)
-        # No forward-fixture feed yet, so demonstrate on notable pairings among
-        # the strongest sides. Replaced by real fixtures when a source lands.
-        top = ranked[:8]
-        pairs = [(top[i], top[i + 1]) for i in range(0, min(len(top) - 1, 7))]
-        fixtures = predict_fixtures(
-            [Fixture(h, a) for h, a in pairs], STATE["elo"], STATE["dc"]
-        ).to_dict("records")
+    illustrative = False
+
+    if STATE["elo"] is not None:
+        fixtures = _predict_state_fixtures()
+
+        if not fixtures and len(STATE["teams"]) >= 2:
+            # Nothing scheduled — between rounds, or before the season opens.
+            # Fall back to notable pairings so the page still demonstrates the
+            # model, but say so. Presenting invented pairings as the weekend's
+            # fixtures would be the one genuinely dishonest thing this page
+            # could do.
+            illustrative = True
+            ranked = sorted(STATE["teams"], key=STATE["elo"].rating, reverse=True)
+            top = ranked[:8]
+            pairs = [(top[i], top[i + 1]) for i in range(0, min(len(top) - 1, 7))]
+            fixtures = predict_fixtures(
+                [Fixture(h, a) for h, a in pairs], STATE["elo"], STATE["dc"]
+            ).to_dict("records")
 
     return templates.TemplateResponse(
         request,
         "index.html",
         {
             "fixtures": fixtures,
+            "illustrative": illustrative,
             "division": DIVISIONS[DISPLAY_DIVISION],
             "model_version": MODEL_VERSION,
             "n_train": STATE["n_train"],
