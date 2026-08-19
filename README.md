@@ -2,7 +2,7 @@
 
 Match outcome prediction for Europe's top five leagues, using Elo and Dixon-Coles fitted on free historical data, evaluated honestly against the bookmaker's closing line.
 
-**Status: week 4 — deterministic models, a forward-fixture feed, an MCP tool layer, FPL player data, and CI plus guardrails. No agents yet.** This is the foundation for a multi-agent system; the roadmap is at the bottom.
+**Status: week 4 — deterministic models, a forward-fixture feed, an MCP tool layer, FPL player data, and the first agent.** This is the foundation for a multi-agent system; the roadmap is at the bottom.
 
 > Predictions are probabilistic estimates from historical results. Not guarantees, and not betting advice.
 
@@ -78,7 +78,40 @@ $ python scripts/fpl.py --pending
 
 `Hull City` → `Hull` and `Ipswich Town` → `Ipswich` resolve, because club-type suffixes say what kind of club it is rather than which one. `Coventry City` doesn't, and that is the point: any threshold loose enough to fix the first two also matches Coventry City to **Leicester City**. The two cases are not separable as text — what tells them apart is knowing which clubs exist. So the resolver reports what it cannot justify instead of inventing a link, and the unresolved club's players are skipped rather than attached to a guess. See [0012](docs/decisions/0012-resolution-refuses-to-guess.md).
 
-That queue is the entity-resolution agent's first job, with a baseline it has to beat: 19 of 20, zero wrong.
+## The first agent
+
+That queue is where the project's first LLM call earns its place. `scripts/resolve.py` asks Claude to decide the names no rule would commit to — and it **proposes**, writing nothing until you pass `--apply`:
+
+```
+$ python scripts/resolve.py
+
+  'Coventry City'
+    new_entity  (confidence 0.95)
+    Coventry City is an English club from Coventry, distinct from any club in the
+    list; the similar names (Leicester, Manchester, Norwich City) are different cities.
+
+cost $0.0045
+Nothing written. Re-run with --apply to commit these decisions.
+```
+
+Scored against the deterministic baseline on ten names it refuses:
+
+```
+$ python scripts/eval_resolver.py
+
+correct        10/10
+WRONG MATCHES  0      <- the number that decides this
+cost           $0.0410
+
+baseline: refuses all 10, so 0 correct and 0 wrong matches.
+VERDICT: ship.
+```
+
+**Accuracy is not the headline; wrong matches is.** The baseline scores zero wrong matches trivially by refusing everything, so a single wrong match would make the agent strictly worse where it counts no matter what else it got right — the eval exits non-zero and says so. The set includes a deliberate trap: `Sheffield Wednesday`, against a database holding `Sheffield United`. Same city, different club, high string similarity. The agent answered `new_entity`.
+
+Three things keep it honest. It only runs on names a rule couldn't settle, so its contribution is measurable. Its output is validated against the schema — a match naming a club we don't have is downgraded, never stored. And `uncertain` is an allowed answer, because an agent forced to choose will guess, and a guess here is the failure the whole design prevents. See [0013](docs/decisions/0013-entity-resolution-agent-proposes.md).
+
+Applying the Coventry decision closed the loop: the club was created, and re-running the FPL ingest brought in the 32 players withheld while its identity was unsettled.
 
 ## Asking the database questions
 
@@ -193,14 +226,15 @@ Models train on all five leagues pooled and display one. Single-league data is ~
 
 ```
 src/fpp/
+  agents/     entity-resolution agent (the only LLM call in the project)
   ingest/     football-data.co.uk results + fixtures, FPL players, name resolution
   models/     elo.py, dixon_coles.py, blend.py
   evaluation/ metrics.py, backtest.py
   mcp_server/ MCP tools over the DB (read-only)
   api.py      FastAPI: JSON endpoints + one server-rendered page
-scripts/      ingest, backtest, predict, fixtures, fpl
+scripts/      ingest, backtest, predict, fixtures, fpl, resolve, eval_resolver
 docs/decisions/  ADRs — why things are the way they are
-tests/        165 tests; model maths checked against closed-form values
+tests/        179 tests; model maths checked against closed-form values
 .github/workflows/  CI: lint, tests on 3.10 and 3.13, leakage check as its own job
 .claude/hooks/      PreToolUse guard: no pushes or merges to main, no destructive SQL
 ```
@@ -212,7 +246,7 @@ a prompt is not what makes them stop — see [0009](docs/decisions/0009-agent-gu
 ## Testing
 
 ```bash
-pytest tests/ -q     # 165 passed
+pytest tests/ -q     # 179 passed
 ```
 
 Tests assert against known truth, not stored snapshots. Synthetic data is generated from *known* team strengths, so the tests check that the model recovers them — a failure should always be explainable as "the model is now wrong about X", never "a number moved". The Elo update is checked against the closed-form 400-point/10:1 property; the Dixon-Coles `tau` against the paper's definition; the gradient against a numerical one.
@@ -241,7 +275,7 @@ See [`docs/decisions/`](docs/decisions/). Some that shaped this:
 | Phase | Scope |
 |---|---|
 | **1 (done)** | Ingestion, Elo + Dixon-Coles, evaluation harness, API and page |
-| 2 | MCP server over the DB (done); ingestion/entity-resolution agent; maintenance agent on GitHub Actions |
+| 2 | MCP server over the DB (done); entity-resolution agent (done); maintenance agent on GitHub Actions |
 | 3 | RAG over football news and match reports; hybrid retrieval; Ragas evals in CI |
 | 4 | Gradient-boosted ensemble and player models, built by an experimentation agent under an evaluator-optimizer loop |
 | 5 | Scraper-repair agent, more leagues, deployment |
