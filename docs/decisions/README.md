@@ -21,3 +21,4 @@ Format: numbered, short, present tense. Status is `accepted`, `superseded by NNN
 | [0009](0009-agent-guardrails-are-structural.md) | Agent guardrails are structural, not prompted | accepted |
 | [0010](0010-forward-fixtures-and-locked-predictions.md) | Forward fixtures from the same source; predictions locked at kick-off | accepted |
 | [0011](0011-mcp-tools-over-raw-sql.md) | Purposeful MCP tools, and read-only enforced below the code | accepted |
+| [0012](0012-resolution-refuses-to-guess.md) | Entity resolution refuses to guess; availability is a time series | accepted |
