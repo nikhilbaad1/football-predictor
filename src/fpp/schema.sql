@@ -97,3 +97,35 @@ CREATE TABLE IF NOT EXISTS name_resolutions (
     created_at    TIMESTAMP NOT NULL,
     UNIQUE (source, raw_name, entity_type)
 );
+
+-- Unstructured text, for the retrieval layer. Structured facts are queried, not
+-- retrieved (ADR 0003) -- nothing that belongs in `matches` goes in here.
+CREATE TABLE IF NOT EXISTS documents (
+    id           INTEGER PRIMARY KEY,
+    source       VARCHAR(20)  NOT NULL,   -- 'wikipedia' | 'rss' | ...
+    external_id  VARCHAR(300) NOT NULL,   -- page title, article URL, ...
+    title        VARCHAR(300) NOT NULL,
+    url          TEXT,
+    license      VARCHAR(40),             -- CC BY-SA 4.0 carries share-alike
+    team         VARCHAR(100),            -- canonical name, NULL if not team-specific
+    season       VARCHAR(10),
+    fetched_at   TIMESTAMP    NOT NULL,
+    UNIQUE (source, external_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_documents_team ON documents (team);
+
+-- Retrieval happens over chunks, not whole articles: a season page is 7,000+
+-- characters and returning all of it as "context" wastes the window on prose
+-- that answers nothing.
+CREATE TABLE IF NOT EXISTS chunks (
+    id           INTEGER PRIMARY KEY,
+    document_id  INTEGER NOT NULL REFERENCES documents(id),
+    ordinal      INTEGER NOT NULL,
+    heading      VARCHAR(300),
+    text         TEXT    NOT NULL,
+    n_words      INTEGER NOT NULL,
+    UNIQUE (document_id, ordinal)
+);
+
+CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks (document_id);

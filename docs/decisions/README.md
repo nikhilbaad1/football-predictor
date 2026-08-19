@@ -23,3 +23,4 @@ Format: numbered, short, present tense. Status is `accepted`, `superseded by NNN
 | [0011](0011-mcp-tools-over-raw-sql.md) | Purposeful MCP tools, and read-only enforced below the code | accepted |
 | [0012](0012-resolution-refuses-to-guess.md) | Entity resolution refuses to guess; availability is a time series | accepted |
 | [0013](0013-entity-resolution-agent-proposes.md) | The entity-resolution agent proposes; it does not write | accepted |
+| [0014](0014-lexical-retrieval-before-vectors.md) | Lexical retrieval first, measured, before any vectors | accepted |
