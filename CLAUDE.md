@@ -6,7 +6,7 @@ Project context for Claude Code. Read this before making changes.
 
 A football match prediction platform. The **primary goal is to learn and demonstrate agentic AI, RAG, and multi-agent engineering**; football prediction is the domain that makes it concrete. Where the two goals conflict, agent engineering wins.
 
-Current stage: **week 4.** The deterministic vertical slice is complete and frozen (ADR 0008), CI and the `PreToolUse` guardrail are in place (ADR 0009), the forward-fixture feed landed (ADR 0010), and the MCP tool layer is live (ADR 0011). Still no agents, no RAG, no ML. See `docs/PLAN.md` for the full roadmap.
+Current stage: **week 4.** The deterministic vertical slice is complete and frozen (ADR 0008), CI and the `PreToolUse` guardrail are in place (ADR 0009), the forward-fixture feed landed (ADR 0010), the MCP tool layer is live (ADR 0011), and the entity-resolution agent shipped (ADR 0013). No RAG, no ML yet. See `docs/PLAN.md` for the full roadmap.
 
 ## MCP server
 
@@ -48,8 +48,11 @@ src/fpp/
   mcp_server/
     tools.py         the tools themselves — plain Python, no MCP imports
     server.py        thin MCP adapter; docstrings here are the tool contract
+  agents/
+    resolve_agent.py entity-resolution agent; proposes, never writes
   api.py            FastAPI app
-scripts/            CLI entry points (ingest, fixtures, backtest, predict)
+scripts/            CLI entry points (ingest, fixtures, fpl, resolve, backtest,
+                    predict, eval_resolver)
 tests/              pytest; model math is verified against closed-form values
 ```
 
@@ -87,6 +90,14 @@ Team names differ between the two feeds within this one source (results say `Ath
 - **Availability is a dated time series, never a column on `players`.** A player injured today was available last week. One mutable "injured" flag makes every historical fit see today's knowledge, which is non-negotiable #1 violated in the quietest possible way.
 - **`fpl_id` is unique within a season, not across seasons.** Nothing depends on cross-season player identity yet; when it does, that is a separate resolution problem.
 
+**The entity-resolution agent** (`agents/resolve_agent.py`, ADR 0013) decides only what `resolve.py` refuses. Rules for changing it:
+
+- **It proposes; `scripts/resolve.py --apply` writes.** Never make it write directly. Reporting an existing club as new creates a duplicate someone notices; matching two different clubs fuses their histories silently.
+- **Validate its output, don't trust it.** A `matched` naming a club not in the known list is downgraded to `uncertain`. The model supplies judgement about football, not facts about this schema.
+- **Keep `uncertain` as an allowed answer.** An agent forced to choose will guess.
+- **Score with `scripts/eval_resolver.py`, not pytest.** CI has no API key, and a unit test gated on a model call measures the model. The metric that decides is **wrong matches**, not accuracy — the baseline gets zero by refusing everything.
+- `ANTHROPIC_API_KEY` in `.env` is needed only for this. Everything else runs without one.
+
 **Entity resolution refuses to guess** (`ingest/resolve.py`). It tries exact, then the alias table, then a head-word match that ignores club-type suffixes (`Hull City` → `Hull`). Anything else goes to `name_resolutions` undecided and its players are skipped. Do not "improve" this by lowering a similarity threshold: the rule that resolves `Hull City` → `Hull` also matches `Coventry City` → `Leicester City`, and those two cases are not separable as text. A missing club is a visible gap; a merged one is silent corruption. Baseline to beat: 19 of 20 FPL names, zero wrong.
 
 Coming later (do not build yet): Understat for xG, FBref for per-90 stats.
@@ -105,4 +116,4 @@ The site displays the **Premier League**, but models train on the **pooled top-5
 
 ## Not yet built (don't scaffold ahead)
 
-Agents, MCP server, RAG, vector search, XGBoost, player models, Next.js frontend. Each has a roadmap slot. Building them early creates surface area with nothing to attach to.
+RAG, vector search, XGBoost, player models, Next.js frontend, the maintenance and scraper-repair agents. Each has a roadmap slot. Building them early creates surface area with nothing to attach to.

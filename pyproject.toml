@@ -18,6 +18,10 @@ dependencies = [
     # (mcp.server.fastmcp -> mcp.server.MCPServer), which is exactly the kind of
     # break that would turn CI red for reasons unrelated to a change here.
     "mcp>=2.0,<3",
+    # Entity-resolution agent. Pre-1.0, so minor bumps can break; the upper
+    # bound keeps CI failing for real reasons rather than for an SDK release.
+    # Also supplies pydantic, which the agent's structured output depends on.
+    "anthropic>=0.123,<1",
 ]
 
 [project.optional-dependencies]

@@ -60,6 +60,13 @@ def _record_resolution(conn, res: Resolution, entity_type: str = "team") -> None
 
     Unresolved rows are the agent's queue. Resolved ones are kept too, so the
     agent can later be scored against decisions already known to be right.
+
+    The `WHERE decision IS NULL` on the upsert is load-bearing: once a name has
+    been settled — by an agent or a person — a later ingest must not overwrite
+    that record with a fresh deterministic one. Without it, creating a club from
+    an agent decision made the next run re-resolve the name by exact match and
+    silently replace `agent:...` with `exact`, destroying the provenance that
+    says a judgement was made and by what.
     """
     conn.execute(
         text(
@@ -75,6 +82,7 @@ def _record_resolution(conn, res: Resolution, entity_type: str = "team") -> None
                 method      = excluded.method,
                 confidence  = excluded.confidence,
                 rationale   = excluded.rationale
+            WHERE name_resolutions.decision IS NULL
             """
         ),
         {
@@ -183,6 +191,58 @@ def ingest_fpl(
             availability += 1
 
     return {"players": players, "availability": availability, "unresolved": unresolved}
+
+
+def apply_resolution(
+    raw_name: str,
+    decision: str,
+    resolved_to: str | None = None,
+    engine: Engine | None = None,
+    source: str = SOURCE,
+    entity_type: str = "team",
+    division: str = "E0",
+    method: str = "agent",
+    confidence: float = 0.0,
+    rationale: str = "",
+) -> str:
+    """Commit one decision about a name. Called only when a human applies it.
+
+    "matched" records the link. "new_entity" creates the club, which is the
+    honest outcome for a side with no history here — it starts at the league
+    average and its predictions are weak until it has played, which is a stated
+    limitation rather than a hidden one.
+
+    Lives here because FPL is currently the only writer to name_resolutions. It
+    moves to its own module when a second source needs it, not before.
+    """
+    if decision not in {"matched", "new_entity"}:
+        raise ValueError(f"refusing to apply a {decision!r} decision")
+
+    engine = engine or get_engine()
+    with engine.begin() as conn:
+        if decision == "new_entity":
+            conn.execute(
+                text("INSERT INTO teams (name, division) VALUES (:n, :d) "
+                     "ON CONFLICT (name) DO NOTHING"),
+                {"n": raw_name, "d": division},
+            )
+            resolved_to = raw_name
+        elif resolved_to not in known_team_names(conn):
+            raise ValueError(f"cannot match {raw_name!r} to unknown team {resolved_to!r}")
+
+        conn.execute(
+            text(
+                """
+                UPDATE name_resolutions
+                   SET resolved_to = :to, decision = :dec, method = :m,
+                       confidence = :c, rationale = :why
+                 WHERE source = :src AND raw_name = :raw AND entity_type = :etype
+                """
+            ),
+            {"to": resolved_to, "dec": decision, "m": method, "c": confidence,
+             "why": rationale, "src": source, "raw": raw_name, "etype": entity_type},
+        )
+    return resolved_to
 
 
 def pending_resolutions(engine: Engine | None = None) -> list[dict[str, Any]]:
