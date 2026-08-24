@@ -2,7 +2,7 @@
 
 Match outcome prediction for Europe's top five leagues, using Elo and Dixon-Coles fitted on free historical data, evaluated honestly against the bookmaker's closing line.
 
-**Status: week 4 — deterministic models, a forward-fixture feed, an MCP tool layer, FPL player data, the first agent, and lexical retrieval.** This is the foundation for a multi-agent system; the roadmap is at the bottom.
+**Status: week 4 — deterministic models, a forward-fixture feed, an MCP tool layer, FPL player data, the first agent, and hybrid retrieval.** This is the foundation for a multi-agent system; the roadmap is at the bottom.
 
 > Predictions are probabilistic estimates from historical results. Not guarantees, and not betting advice.
 
@@ -117,23 +117,28 @@ Applying the Coventry decision closed the loop: the club was created, and re-run
 
 Structured facts are queried; only text with no schema is retrieved ([0003](docs/decisions/0003-sql-for-structured-rag-for-text.md)). The corpus is 23 Wikipedia articles — every current Premier League club plus three season pages — chunked on the articles' own section headings into 978 passages.
 
-Lexical (BM25) only so far, and that is deliberate. PLAN §4 calls BM25 "the highest-impact addition to a pure vector pipeline", which is a claim about what lexical matching contributes — unverifiable without a number for lexical alone:
+Lexical (BM25) was built and measured **first**, alone, so that whatever dense retrieval added would be attributable rather than assumed ([0014](docs/decisions/0014-lexical-retrieval-before-vectors.md)). Then dense, then Reciprocal Rank Fusion of the two:
 
 ```
 $ python scripts/eval_retrieval.py
 
-recall@5   11/13  (85%)
-MRR         0.750
-random@5   ~0.5%  (floor, for scale)
+                                                    lexical    dense   hybrid
+  recall@5                                            11/13    12/13    12/13
+  MRR                                                 0.750    0.885    0.808
 ```
 
-The two misses are the useful part. Both are unfiltered queries where a topically plausible passage from the *wrong* document won: "record number of goals scored in a season" retrieved Sunderland's **Record goalscorers** section instead of the season article's "a record 1,246 goals". That is precisely what lexical matching does — strong term overlap, wrong document — and it is the gap dense retrieval now has to close, with a number attached.
+**Dense beats lexical** — +1 recall, +0.135 MRR — and wins exactly where the lexical write-up predicted it would, on paraphrase queries with no keyword bridge.
 
-BM25 is written out rather than imported, so the tests check it against values computed by hand from the formula, the way the Elo and Dixon-Coles maths already are. See [0014](docs/decisions/0014-lexical-retrieval-before-vectors.md).
+**Fusion does not beat dense**, which is the result worth keeping because PLAN §4 assumes it would. On "record number of goals scored in a season", dense ranks the correct article 1st and lexical ranks it 12th, so RRF scores it `1/61 + 1/72 = 0.0303` — losing to a *wrong* Sunderland passage both rankers placed mid-table at `1/63 + 1/64 = 0.0315`. That is RRF working as designed: agreement beats enthusiasm. Here the enthusiasm was right and the agreement was wrong.
+
+The default stays `hybrid` regardless, because 13 cases is not enough to overturn a well-supported general result — one case is 7.7% of recall. The number is published either way. See [0015](docs/decisions/0015-dense-beats-lexical-fusion-does-not.md).
+
+BM25 and RRF are both written out rather than imported, so the tests check them against values computed by hand from the formulas, the way the Elo and Dixon-Coles maths already are.
 
 ```bash
 python scripts/rag_ingest.py                      # build the corpus (cached)
-python scripts/rag_query.py "stadium capacity" --team Arsenal
+python scripts/rag_embed.py                       # embed it (resumable)
+python scripts/rag_query.py "stadium capacity" --team Arsenal --mode hybrid
 ```
 
 Text from [Wikipedia](https://en.wikipedia.org/), CC BY-SA 4.0.
@@ -252,7 +257,7 @@ Models train on all five leagues pooled and display one. Single-league data is ~
 ```
 src/fpp/
   agents/     entity-resolution agent (the only LLM call in the project)
-  rag/        Wikipedia corpus + BM25 retrieval over unstructured text
+  rag/        Wikipedia corpus; BM25, dense embeddings, and RRF fusion
   ingest/     football-data.co.uk results + fixtures, FPL players, name resolution
   models/     elo.py, dixon_coles.py, blend.py
   evaluation/ metrics.py, backtest.py
@@ -260,7 +265,7 @@ src/fpp/
   api.py      FastAPI: JSON endpoints + one server-rendered page
 scripts/      ingest, backtest, predict, fixtures, fpl, resolve, rag_*, eval_*
 docs/decisions/  ADRs — why things are the way they are
-tests/        205 tests; model maths checked against closed-form values
+tests/        240 tests; model maths checked against closed-form values
 .github/workflows/  CI: lint, tests on 3.10 and 3.13, leakage check as its own job
 .claude/hooks/      PreToolUse guard: no pushes or merges to main, no destructive SQL
 ```
@@ -272,7 +277,7 @@ a prompt is not what makes them stop — see [0009](docs/decisions/0009-agent-gu
 ## Testing
 
 ```bash
-pytest tests/ -q     # 205 passed
+pytest tests/ -q     # 240 passed
 ```
 
 Tests assert against known truth, not stored snapshots. Synthetic data is generated from *known* team strengths, so the tests check that the model recovers them — a failure should always be explainable as "the model is now wrong about X", never "a number moved". The Elo update is checked against the closed-form 400-point/10:1 property; the Dixon-Coles `tau` against the paper's definition; the gradient against a numerical one.

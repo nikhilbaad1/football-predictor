@@ -6,7 +6,7 @@ Project context for Claude Code. Read this before making changes.
 
 A football match prediction platform. The **primary goal is to learn and demonstrate agentic AI, RAG, and multi-agent engineering**; football prediction is the domain that makes it concrete. Where the two goals conflict, agent engineering wins.
 
-Current stage: **week 4.** The deterministic vertical slice is complete and frozen (ADR 0008), CI and the `PreToolUse` guardrail are in place (ADR 0009), the forward-fixture feed landed (ADR 0010), the MCP tool layer is live (ADR 0011), the entity-resolution agent shipped (ADR 0013), and lexical retrieval landed (ADR 0014). Dense retrieval and ML are still ahead. See `docs/PLAN.md` for the full roadmap.
+Current stage: **week 4.** The deterministic vertical slice is complete and frozen (ADR 0008), CI and the `PreToolUse` guardrail are in place (ADR 0009), the forward-fixture feed landed (ADR 0010), the MCP tool layer is live (ADR 0011), the entity-resolution agent shipped (ADR 0013), and retrieval landed lexical-then-dense-then-fused (ADRs 0014, 0015). Reranking and ML are still ahead. See `docs/PLAN.md` for the full roadmap.
 
 ## MCP server
 
@@ -23,7 +23,10 @@ Tool docstrings in `server.py` are what the model reads when choosing a tool —
 
 - **Only text with no schema goes in `documents`/`chunks`.** Scorelines, dates and odds live in `matches` and are queried exactly (ADR 0003). Embedding them turns a lookup into an approximation.
 - **BM25 is hand-written and tested against closed-form values**, like the Elo and Dixon-Coles maths. Don't replace it with a library — it is fifteen lines and it has to be defensible.
-- **Don't add dense retrieval without re-running `scripts/eval_retrieval.py`.** The lexical baseline is recall@5 = 11/13, MRR 0.750 (ADR 0014). Dense has to beat that on the same set or it does not go in.
+- **Re-run `scripts/eval_retrieval.py` before changing anything about ranking.** Current numbers on 13 cases (ADR 0015): lexical 11/13 MRR 0.750, dense 12/13 MRR 0.885, hybrid 12/13 MRR 0.808.
+- **Dense beats lexical; fusion does not beat dense.** RRF promotes what both rankers agree on, and on paraphrase queries lexical is confidently *wrong*, so agreement launders the wrong answer in. The default is still `hybrid` because 13 cases cannot overturn a general result — one case is 7.7% of recall. Grow the eval set before touching the default or tuning `RRF_K`.
+- **Embeddings are Voyage `voyage-3-large` in SQLite blobs, not pgvector.** Cosine over ~1,000 chunks is one matrix multiply; ADR 0005 defers Postgres until pgvector is genuinely needed. Documents and queries embed with different `input_type` — mixing them is a silent accuracy loss.
+- **The unbilled Voyage tier is 3 requests/min and 10k tokens/min**, so a full corpus embed takes ~22 minutes. `scripts/rag_embed.py` persists per batch and resumes; never make it accumulate and write once.
 - **A club's Wikipedia article is verified to be association football.** `Hull F.C.` is a rugby league club and passed an earlier `"football club" in text` check, putting 29 chunks of rugby in the corpus. Clubs that don't resolve by rule get an explicit entry in `PAGE_OVERRIDES`, never a fuzzy match.
 - Pages are cached under `data/raw/wikipedia/`. Wikipedia rate-limits bursts; requests are spaced.
 
@@ -63,9 +66,12 @@ src/fpp/
   rag/
     wikipedia.py     text corpus; verifies the article is the right sport
     lexical.py       BM25, hand-written and closed-form tested
+    dense.py         Voyage embeddings, cosine over SQLite blobs
+    hybrid.py        Reciprocal Rank Fusion of the two
   api.py            FastAPI app
 scripts/            CLI entry points (ingest, fixtures, fpl, resolve, backtest,
-                    predict, rag_ingest, rag_query, eval_resolver, eval_retrieval)
+                    predict, rag_ingest, rag_embed, rag_query, eval_resolver,
+                    eval_retrieval)
 tests/              pytest; model math is verified against closed-form values
 ```
 
