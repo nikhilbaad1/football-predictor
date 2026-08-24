@@ -6,7 +6,7 @@ Project context for Claude Code. Read this before making changes.
 
 A football match prediction platform. The **primary goal is to learn and demonstrate agentic AI, RAG, and multi-agent engineering**; football prediction is the domain that makes it concrete. Where the two goals conflict, agent engineering wins.
 
-Current stage: **week 4.** The deterministic vertical slice is complete and frozen (ADR 0008), CI and the `PreToolUse` guardrail are in place (ADR 0009), the forward-fixture feed landed (ADR 0010), the MCP tool layer is live (ADR 0011), and the entity-resolution agent shipped (ADR 0013). No RAG, no ML yet. See `docs/PLAN.md` for the full roadmap.
+Current stage: **week 4.** The deterministic vertical slice is complete and frozen (ADR 0008), CI and the `PreToolUse` guardrail are in place (ADR 0009), the forward-fixture feed landed (ADR 0010), the MCP tool layer is live (ADR 0011), the entity-resolution agent shipped (ADR 0013), and lexical retrieval landed (ADR 0014). Dense retrieval and ML are still ahead. See `docs/PLAN.md` for the full roadmap.
 
 ## MCP server
 
@@ -16,6 +16,16 @@ Current stage: **week 4.** The deterministic vertical slice is complete and froz
 - **The read-only connection is the security guarantee, not the `SELECT`-only keyword check in `run_sql`.** The `PreToolUse` hook inspects shell commands and cannot see an MCP call, so this layer has to hold by itself. Never add a tool that writes; ingest stays a CLI.
 
 Tool docstrings in `server.py` are what the model reads when choosing a tool — they are interface, not commentary. Say what a tool answers, when to prefer it, and what it will not do.
+
+## Retrieval
+
+`src/fpp/rag/` holds the text corpus and lexical search. Rules:
+
+- **Only text with no schema goes in `documents`/`chunks`.** Scorelines, dates and odds live in `matches` and are queried exactly (ADR 0003). Embedding them turns a lookup into an approximation.
+- **BM25 is hand-written and tested against closed-form values**, like the Elo and Dixon-Coles maths. Don't replace it with a library — it is fifteen lines and it has to be defensible.
+- **Don't add dense retrieval without re-running `scripts/eval_retrieval.py`.** The lexical baseline is recall@5 = 11/13, MRR 0.750 (ADR 0014). Dense has to beat that on the same set or it does not go in.
+- **A club's Wikipedia article is verified to be association football.** `Hull F.C.` is a rugby league club and passed an earlier `"football club" in text` check, putting 29 chunks of rugby in the corpus. Clubs that don't resolve by rule get an explicit entry in `PAGE_OVERRIDES`, never a fuzzy match.
+- Pages are cached under `data/raw/wikipedia/`. Wikipedia rate-limits bursts; requests are spaced.
 
 ## Non-negotiables
 
@@ -50,9 +60,12 @@ src/fpp/
     server.py        thin MCP adapter; docstrings here are the tool contract
   agents/
     resolve_agent.py entity-resolution agent; proposes, never writes
+  rag/
+    wikipedia.py     text corpus; verifies the article is the right sport
+    lexical.py       BM25, hand-written and closed-form tested
   api.py            FastAPI app
 scripts/            CLI entry points (ingest, fixtures, fpl, resolve, backtest,
-                    predict, eval_resolver)
+                    predict, rag_ingest, rag_query, eval_resolver, eval_retrieval)
 tests/              pytest; model math is verified against closed-form values
 ```
 
@@ -116,4 +129,4 @@ The site displays the **Premier League**, but models train on the **pooled top-5
 
 ## Not yet built (don't scaffold ahead)
 
-RAG, vector search, XGBoost, player models, Next.js frontend, the maintenance and scraper-repair agents. Each has a roadmap slot. Building them early creates surface area with nothing to attach to.
+Dense/vector search, XGBoost, player models, Next.js frontend, the analyst agent, the maintenance and scraper-repair agents. Each has a roadmap slot. Building them early creates surface area with nothing to attach to.
