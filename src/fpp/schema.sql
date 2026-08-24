@@ -129,3 +129,15 @@ CREATE TABLE IF NOT EXISTS chunks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks (document_id);
+
+-- Dense vectors for chunks. Stored as a float32 blob in SQLite rather than in
+-- pgvector, deliberately: ADR 0005 moves to Postgres when pgvector is *needed*,
+-- and brute-force cosine over ~1,000 chunks is milliseconds. The migration
+-- happens when a measurement says the corpus outgrew this, not before.
+CREATE TABLE IF NOT EXISTS chunk_embeddings (
+    chunk_id    INTEGER PRIMARY KEY REFERENCES chunks(id),
+    model       VARCHAR(40) NOT NULL,   -- vectors from different models never mix
+    dim         INTEGER     NOT NULL,
+    vector      BLOB        NOT NULL,   -- float32, L2-normalised
+    created_at  TIMESTAMP   NOT NULL
+);

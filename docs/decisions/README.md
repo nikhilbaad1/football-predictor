@@ -24,3 +24,4 @@ Format: numbered, short, present tense. Status is `accepted`, `superseded by NNN
 | [0012](0012-resolution-refuses-to-guess.md) | Entity resolution refuses to guess; availability is a time series | accepted |
 | [0013](0013-entity-resolution-agent-proposes.md) | The entity-resolution agent proposes; it does not write | accepted |
 | [0014](0014-lexical-retrieval-before-vectors.md) | Lexical retrieval first, measured, before any vectors | accepted |
+| [0015](0015-dense-beats-lexical-fusion-does-not.md) | Dense beats lexical; fusing them does not beat dense | accepted |

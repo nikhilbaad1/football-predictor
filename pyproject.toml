@@ -22,6 +22,10 @@ dependencies = [
     # bound keeps CI failing for real reasons rather than for an SDK release.
     # Also supplies pydantic, which the agent's structured output depends on.
     "anthropic>=0.123,<1",
+    # Dense-retrieval embeddings (voyage-3-large, PLAN section 13). Pre-1.0, so
+    # bounded for the same reason as the others: CI should fail for a change
+    # made here, not for an SDK release.
+    "voyageai>=0.5,<1",
 ]
 
 [project.optional-dependencies]
