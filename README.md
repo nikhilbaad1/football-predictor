@@ -2,7 +2,7 @@
 
 Match outcome prediction for Europe's top five leagues, using Elo and Dixon-Coles fitted on free historical data, evaluated honestly against the bookmaker's closing line.
 
-**Status: week 4 — deterministic models, a forward-fixture feed, an MCP tool layer, FPL player data, and the first agent.** This is the foundation for a multi-agent system; the roadmap is at the bottom.
+**Status: week 4 — deterministic models, a forward-fixture feed, an MCP tool layer, FPL player data, the first agent, and lexical retrieval.** This is the foundation for a multi-agent system; the roadmap is at the bottom.
 
 > Predictions are probabilistic estimates from historical results. Not guarantees, and not betting advice.
 
@@ -112,6 +112,31 @@ VERDICT: ship.
 Three things keep it honest. It only runs on names a rule couldn't settle, so its contribution is measurable. Its output is validated against the schema — a match naming a club we don't have is downgraded, never stored. And `uncertain` is an allowed answer, because an agent forced to choose will guess, and a guess here is the failure the whole design prevents. See [0013](docs/decisions/0013-entity-resolution-agent-proposes.md).
 
 Applying the Coventry decision closed the loop: the club was created, and re-running the FPL ingest brought in the 32 players withheld while its identity was unsettled.
+
+## Retrieval over text
+
+Structured facts are queried; only text with no schema is retrieved ([0003](docs/decisions/0003-sql-for-structured-rag-for-text.md)). The corpus is 23 Wikipedia articles — every current Premier League club plus three season pages — chunked on the articles' own section headings into 978 passages.
+
+Lexical (BM25) only so far, and that is deliberate. PLAN §4 calls BM25 "the highest-impact addition to a pure vector pipeline", which is a claim about what lexical matching contributes — unverifiable without a number for lexical alone:
+
+```
+$ python scripts/eval_retrieval.py
+
+recall@5   11/13  (85%)
+MRR         0.750
+random@5   ~0.5%  (floor, for scale)
+```
+
+The two misses are the useful part. Both are unfiltered queries where a topically plausible passage from the *wrong* document won: "record number of goals scored in a season" retrieved Sunderland's **Record goalscorers** section instead of the season article's "a record 1,246 goals". That is precisely what lexical matching does — strong term overlap, wrong document — and it is the gap dense retrieval now has to close, with a number attached.
+
+BM25 is written out rather than imported, so the tests check it against values computed by hand from the formula, the way the Elo and Dixon-Coles maths already are. See [0014](docs/decisions/0014-lexical-retrieval-before-vectors.md).
+
+```bash
+python scripts/rag_ingest.py                      # build the corpus (cached)
+python scripts/rag_query.py "stadium capacity" --team Arsenal
+```
+
+Text from [Wikipedia](https://en.wikipedia.org/), CC BY-SA 4.0.
 
 ## Asking the database questions
 
@@ -227,14 +252,15 @@ Models train on all five leagues pooled and display one. Single-league data is ~
 ```
 src/fpp/
   agents/     entity-resolution agent (the only LLM call in the project)
+  rag/        Wikipedia corpus + BM25 retrieval over unstructured text
   ingest/     football-data.co.uk results + fixtures, FPL players, name resolution
   models/     elo.py, dixon_coles.py, blend.py
   evaluation/ metrics.py, backtest.py
   mcp_server/ MCP tools over the DB (read-only)
   api.py      FastAPI: JSON endpoints + one server-rendered page
-scripts/      ingest, backtest, predict, fixtures, fpl, resolve, eval_resolver
+scripts/      ingest, backtest, predict, fixtures, fpl, resolve, rag_*, eval_*
 docs/decisions/  ADRs — why things are the way they are
-tests/        179 tests; model maths checked against closed-form values
+tests/        205 tests; model maths checked against closed-form values
 .github/workflows/  CI: lint, tests on 3.10 and 3.13, leakage check as its own job
 .claude/hooks/      PreToolUse guard: no pushes or merges to main, no destructive SQL
 ```
@@ -246,7 +272,7 @@ a prompt is not what makes them stop — see [0009](docs/decisions/0009-agent-gu
 ## Testing
 
 ```bash
-pytest tests/ -q     # 179 passed
+pytest tests/ -q     # 205 passed
 ```
 
 Tests assert against known truth, not stored snapshots. Synthetic data is generated from *known* team strengths, so the tests check that the model recovers them — a failure should always be explainable as "the model is now wrong about X", never "a number moved". The Elo update is checked against the closed-form 400-point/10:1 property; the Dixon-Coles `tau` against the paper's definition; the gradient against a numerical one.
@@ -276,7 +302,7 @@ See [`docs/decisions/`](docs/decisions/). Some that shaped this:
 |---|---|
 | **1 (done)** | Ingestion, Elo + Dixon-Coles, evaluation harness, API and page |
 | 2 | MCP server over the DB (done); entity-resolution agent (done); maintenance agent on GitHub Actions |
-| 3 | RAG over football news and match reports; hybrid retrieval; Ragas evals in CI |
+| 3 | RAG: lexical retrieval done; dense + fusion + rerank next; Ragas evals in CI |
 | 4 | Gradient-boosted ensemble and player models, built by an experimentation agent under an evaluator-optimizer loop |
 | 5 | Scraper-repair agent, more leagues, deployment |
 
