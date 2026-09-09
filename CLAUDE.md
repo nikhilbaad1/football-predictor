@@ -6,7 +6,7 @@ Project context for Claude Code. Read this before making changes.
 
 A football match prediction platform. The **primary goal is to learn and demonstrate agentic AI, RAG, and multi-agent engineering**; football prediction is the domain that makes it concrete. Where the two goals conflict, agent engineering wins.
 
-Current stage: **week 4.** The deterministic vertical slice is complete and frozen (ADR 0008), CI and the `PreToolUse` guardrail are in place (ADR 0009), the forward-fixture feed landed (ADR 0010), the MCP tool layer is live (ADR 0011), the entity-resolution agent shipped (ADR 0013), and retrieval landed lexical-then-dense-then-fused (ADRs 0014, 0015). Reranking and ML are still ahead. See `docs/PLAN.md` for the full roadmap.
+Current stage: **week 4.** The deterministic vertical slice is complete and frozen (ADR 0008), CI and the `PreToolUse` guardrail are in place (ADR 0009), the forward-fixture feed landed (ADR 0010), the MCP tool layer is live (ADR 0011), the entity-resolution agent shipped (ADR 0013), retrieval landed lexical-then-dense-then-fused (ADRs 0014, 0015), and the analyst agent routes between both sources (ADR 0016). Reranking, Ragas and ML are still ahead. See `docs/PLAN.md` for the full roadmap.
 
 ## MCP server
 
@@ -63,6 +63,7 @@ src/fpp/
     server.py        thin MCP adapter; docstrings here are the tool contract
   agents/
     resolve_agent.py entity-resolution agent; proposes, never writes
+    analyst.py       routes questions between the DB tools and the text corpus
   rag/
     wikipedia.py     text corpus; verifies the article is the right sport
     lexical.py       BM25, hand-written and closed-form tested
@@ -70,8 +71,8 @@ src/fpp/
     hybrid.py        Reciprocal Rank Fusion of the two
   api.py            FastAPI app
 scripts/            CLI entry points (ingest, fixtures, fpl, resolve, backtest,
-                    predict, rag_ingest, rag_embed, rag_query, eval_resolver,
-                    eval_retrieval)
+                    predict, rag_ingest, rag_embed, rag_query, ask, eval_resolver,
+                    eval_retrieval, eval_analyst)
 tests/              pytest; model math is verified against closed-form values
 ```
 
@@ -108,6 +109,14 @@ Team names differ between the two feeds within this one source (results say `Ath
 
 - **Availability is a dated time series, never a column on `players`.** A player injured today was available last week. One mutable "injured" flag makes every historical fit see today's knowledge, which is non-negotiable #1 violated in the quietest possible way.
 - **`fpl_id` is unique within a season, not across seasons.** Nothing depends on cross-season player identity yet; when it does, that is a separate resolution problem.
+
+**The analyst agent** (`agents/analyst.py`, ADR 0016) answers questions over both sources. Rules:
+
+- **It reuses `mcp_server/tools.py` as plain Python, not over MCP.** That is why the tool logic must keep importing nothing from `mcp`. Adding a second copy of the logic for this agent would be the wrong fix for anything.
+- **Every claim must come from a tool result.** The prompt forbids answering from the model's own football knowledge — otherwise it answers without checking and the whole retrieval layer is decoration.
+- **Classify any new tool** in `STRUCTURED_TOOLS` or `TEXT_TOOLS`. A test asserts the classification is exhaustive; an unclassified tool is invisible to `scripts/eval_analyst.py`, which would keep reporting a score while no longer covering the agent.
+- **Tools must return text, not dicts.** The tool runner 400s on an object, and the error names neither the tool nor the cause.
+- Routing is scored (12/12); answer correctness is **not** measured yet.
 
 **The entity-resolution agent** (`agents/resolve_agent.py`, ADR 0013) decides only what `resolve.py` refuses. Rules for changing it:
 
