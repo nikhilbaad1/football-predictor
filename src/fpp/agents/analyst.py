@@ -22,6 +22,7 @@ this project spent two ADRs measuring is decoration.
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 from dataclasses import dataclass, field
@@ -47,18 +48,38 @@ STRUCTURED_TOOLS = {
 TEXT_TOOLS = {"search_text"}
 
 
-def _safe(fn, **kwargs) -> str:
+# What each tool returned during the current ask(). Faithfulness can only be
+# judged against the evidence the agent actually saw, and the tool runner does
+# not hand results back to the caller. A ContextVar rather than a module global
+# so concurrent asks cannot read each other's evidence.
+_EVIDENCE: contextvars.ContextVar[list | None] = contextvars.ContextVar(
+    "analyst_evidence", default=None
+)
+
+
+def _record(tool: str, payload: str) -> str:
+    collected = _EVIDENCE.get()
+    if collected is not None:
+        collected.append({"tool": tool, "result": payload})
+    return payload
+
+
+def _safe(tool: str, fn, **kwargs) -> str:
     """Run a tool and hand back JSON text.
 
     The tool runner requires a string, not a dict. A caller-fixable problem is
     returned as a result rather than raised: the agent can read "closest
     matches: Arsenal" and try again, which a traceback does not allow.
+
+    `tool` is passed explicitly rather than read off `fn.__name__`: the evidence
+    log should be labelled with the tool the agent called, which is not always
+    what the underlying function happens to be called.
     """
     try:
         payload = fn(**kwargs)
     except db.ToolError as exc:
         payload = {"error": str(exc)}
-    return json.dumps(payload, default=str)
+    return _record(tool, json.dumps(payload, default=str))
 
 
 @beta_tool
@@ -72,7 +93,7 @@ def predict_match(home: str, away: str) -> str:
     Use for any question about who is likely to win a match, real or
     hypothetical. Not for questions about matches already played.
     """
-    return _safe(db.predict_match, home=home, away=away)
+    return _safe("predict_match", db.predict_match, home=home, away=away)
 
 
 @beta_tool
@@ -85,7 +106,7 @@ def get_upcoming_fixtures(division: str | None = None, limit: int = 20) -> str:
     An empty list is a normal answer — the fixture source publishes only about a
     week ahead, so there is genuinely nothing scheduled between rounds.
     """
-    return _safe(db.get_upcoming_fixtures, division=division, limit=limit)
+    return _safe("get_upcoming_fixtures", db.get_upcoming_fixtures, division=division, limit=limit)
 
 
 @beta_tool
@@ -99,7 +120,7 @@ def get_head_to_head(team_a: str, team_b: str, limit: int = 10) -> str:
     Use for any question about results between two specific clubs — how many
     times one has beaten the other, recent scorelines, historical record.
     """
-    return _safe(db.get_head_to_head, team_a=team_a, team_b=team_b, limit=limit)
+    return _safe("get_head_to_head", db.get_head_to_head, team_a=team_a, team_b=team_b, limit=limit)
 
 
 @beta_tool
@@ -109,7 +130,7 @@ def get_team_form(team: str, n: int = 10) -> str:
     Returns a W/D/L string with the most recent match first, goals scored and
     conceded over that span, and the individual matches.
     """
-    return _safe(db.get_team_form, team=team, n=n)
+    return _safe("get_team_form", db.get_team_form, team=team, n=n)
 
 
 @beta_tool
@@ -133,7 +154,7 @@ def run_sql(query: str, limit: int = 100) -> str:
     result is 'H', 'D' or 'A'. Team names live in teams.name; matches stores ids.
     player_availability is a dated time series — filter by as_of.
     """
-    return _safe(db.run_sql, query=query, limit=limit)
+    return _safe("run_sql", db.run_sql, query=query, limit=limit)
 
 
 @beta_tool
@@ -150,7 +171,7 @@ def search_text(query: str, team: str | None = None, limit: int = 5) -> str:
     text that mentions numbers rather than the numbers themselves.
     """
     hits = hybrid_search(query, team=team, limit=limit)
-    return json.dumps({
+    payload = json.dumps({
         "count": len(hits),
         "passages": [
             {
@@ -161,12 +182,35 @@ def search_text(query: str, team: str | None = None, limit: int = 5) -> str:
         ],
         "license": "Text from Wikipedia, CC BY-SA 4.0.",
     }, default=str)
+    return _record("search_text", payload)
 
 
 ALL_TOOLS = [
     predict_match, get_upcoming_fixtures, get_head_to_head,
     get_team_form, run_sql, search_text,
 ]
+
+
+def tool_descriptions() -> str:
+    """The tool docstrings, as the model sees them.
+
+    These are evidence too. The agent is told in these descriptions that E0 is
+    the Premier League and that `players` holds identity and availability but
+    not minutes, so a statement of either is grounded — just not in a tool
+    *result*. A faithfulness check given only the results marks such claims
+    unsupported and reports an agent that explained its own limits as one that
+    invented things.
+    """
+    parts = []
+    for tool in ALL_TOOLS:
+        # @beta_tool wraps the function, so the docstring is on `.description`
+        # rather than `__doc__` — reading __doc__ silently yields the wrapper's,
+        # which is short and says nothing about the schema.
+        name = getattr(tool, "name", None) or tool.__name__
+        doc = (getattr(tool, "description", None) or tool.__doc__ or "").strip()
+        parts.append(f"--- tool: {name} ---\n{doc}")
+    return "\n\n".join(parts)
+
 
 SYSTEM = """You answer questions about football using the tools provided, and
 only using the tools provided.
@@ -198,6 +242,7 @@ class AnalystAnswer:
     question: str
     answer: str
     tools_used: list[str] = field(default_factory=list)
+    evidence: list[dict] = field(default_factory=list)
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
@@ -249,6 +294,7 @@ def ask(question: str, client=None, model: str = MODEL) -> AnalystAnswer:
     """Answer one question, routing between structured tools and text search."""
     client = _build_client(client)
     result = AnalystAnswer(question=question, answer="", model=model)
+    token = _EVIDENCE.set(result.evidence)
 
     runner = client.beta.messages.tool_runner(
         model=model,
@@ -279,5 +325,6 @@ def ask(question: str, client=None, model: str = MODEL) -> AnalystAnswer:
             log.warning("stopping after %s iterations", MAX_ITERATIONS)
             break
 
+    _EVIDENCE.reset(token)
     result.answer = final_text[0] if final_text else ""
     return result

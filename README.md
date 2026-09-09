@@ -159,7 +159,18 @@ Scored on **routing** — did it go to a source that could answer? — over 12 q
 
 **Why this ground truth is stronger than the retrieval eval's.** [0015](docs/decisions/0015-dense-beats-lexical-fusion-does-not.md) admits its relevance labels were written by the person who built the retriever, after reading the corpus. These labels aren't judgement calls: a question is `structured` when the fact has a column and `text` when it doesn't. "How many times has X beaten Y" is a COUNT over `matches.result`; "what is the club's nickname" has no column anywhere. The label is checkable against `schema.sql`.
 
-**What it does not measure is whether the answers are right.** Routing is necessary, not sufficient — answer quality needs its own harness. The agent is also forbidden from answering out of its own knowledge: every claim must come from a tool result, and "the tools don't answer this" is allowed. Without that, a model that already knows the answer would make the whole retrieval layer decoration. See [0016](docs/decisions/0016-analyst-agent-routes-and-cites.md).
+**Answers are scored too, on faithfulness rather than accuracy:**
+
+```
+$ python scripts/eval_answers.py
+
+faithfulness   99/103 claims supported (96%)
+declined well  4/4 questions with no data answered without asserting anything unsupported
+```
+
+Accuracy would need someone to decide the right answer — the same weakness [0015](docs/decisions/0015-dense-beats-lexical-fusion-does-not.md) admits about the retrieval labels. Faithfulness asks something the system's own output settles: does every claim follow from the rows and passages it retrieved? The judge needs no football knowledge, and is told that a claim it *knows* to be true but which the evidence doesn't carry is unsupported. Four of the questions have answers in no column and no article; the agent declined all four without asserting anything ungrounded. **Faithful still isn't correct** — a claim the source got wrong is supported — and the script says so on every run. See [0017](docs/decisions/0017-faithfulness-not-accuracy.md).
+
+Routing is necessary, not sufficient. The agent is also forbidden from answering out of its own knowledge: every claim must come from a tool result, and "the tools don't answer this" is allowed. Without that, a model that already knows the answer would make the whole retrieval layer decoration. See [0016](docs/decisions/0016-analyst-agent-routes-and-cites.md).
 
 ## Asking the database questions
 
@@ -274,7 +285,7 @@ Models train on all five leagues pooled and display one. Single-league data is ~
 
 ```
 src/fpp/
-  agents/     entity-resolution + analyst agents
+  agents/     entity-resolution + analyst agents, and a faithfulness judge
   rag/        Wikipedia corpus; BM25, dense embeddings, and RRF fusion
   ingest/     football-data.co.uk results + fixtures, FPL players, name resolution
   models/     elo.py, dixon_coles.py, blend.py
@@ -283,7 +294,7 @@ src/fpp/
   api.py      FastAPI: JSON endpoints + one server-rendered page
 scripts/      ingest, backtest, predict, fixtures, fpl, resolve, rag_*, eval_*
 docs/decisions/  ADRs — why things are the way they are
-tests/        258 tests; model maths checked against closed-form values
+tests/        278 tests; model maths checked against closed-form values
 .github/workflows/  CI: lint, tests on 3.10 and 3.13, leakage check as its own job
 .claude/hooks/      PreToolUse guard: no pushes or merges to main, no destructive SQL
 ```
@@ -295,7 +306,7 @@ a prompt is not what makes them stop — see [0009](docs/decisions/0009-agent-gu
 ## Testing
 
 ```bash
-pytest tests/ -q     # 258 passed
+pytest tests/ -q     # 278 passed
 ```
 
 Tests assert against known truth, not stored snapshots. Synthetic data is generated from *known* team strengths, so the tests check that the model recovers them — a failure should always be explainable as "the model is now wrong about X", never "a number moved". The Elo update is checked against the closed-form 400-point/10:1 property; the Dixon-Coles `tau` against the paper's definition; the gradient against a numerical one.

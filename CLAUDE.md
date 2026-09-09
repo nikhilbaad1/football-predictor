@@ -6,7 +6,7 @@ Project context for Claude Code. Read this before making changes.
 
 A football match prediction platform. The **primary goal is to learn and demonstrate agentic AI, RAG, and multi-agent engineering**; football prediction is the domain that makes it concrete. Where the two goals conflict, agent engineering wins.
 
-Current stage: **week 4.** The deterministic vertical slice is complete and frozen (ADR 0008), CI and the `PreToolUse` guardrail are in place (ADR 0009), the forward-fixture feed landed (ADR 0010), the MCP tool layer is live (ADR 0011), the entity-resolution agent shipped (ADR 0013), retrieval landed lexical-then-dense-then-fused (ADRs 0014, 0015), and the analyst agent routes between both sources (ADR 0016). Reranking, Ragas and ML are still ahead. See `docs/PLAN.md` for the full roadmap.
+Current stage: **week 4.** The deterministic vertical slice is complete and frozen (ADR 0008), CI and the `PreToolUse` guardrail are in place (ADR 0009), the forward-fixture feed landed (ADR 0010), the MCP tool layer is live (ADR 0011), the entity-resolution agent shipped (ADR 0013), retrieval landed lexical-then-dense-then-fused (ADRs 0014, 0015), the analyst agent routes between both sources (ADR 0016), and its answers are scored on faithfulness (ADR 0017). Reranking and ML are still ahead. See `docs/PLAN.md` for the full roadmap.
 
 ## MCP server
 
@@ -64,6 +64,7 @@ src/fpp/
   agents/
     resolve_agent.py entity-resolution agent; proposes, never writes
     analyst.py       routes questions between the DB tools and the text corpus
+    judge.py         faithfulness judge; Ragas's definition, not its dependency
   rag/
     wikipedia.py     text corpus; verifies the article is the right sport
     lexical.py       BM25, hand-written and closed-form tested
@@ -72,7 +73,7 @@ src/fpp/
   api.py            FastAPI app
 scripts/            CLI entry points (ingest, fixtures, fpl, resolve, backtest,
                     predict, rag_ingest, rag_embed, rag_query, ask, eval_resolver,
-                    eval_retrieval, eval_analyst)
+                    eval_retrieval, eval_analyst, eval_answers)
 tests/              pytest; model math is verified against closed-form values
 ```
 
@@ -116,7 +117,9 @@ Team names differ between the two feeds within this one source (results say `Ath
 - **Every claim must come from a tool result.** The prompt forbids answering from the model's own football knowledge — otherwise it answers without checking and the whole retrieval layer is decoration.
 - **Classify any new tool** in `STRUCTURED_TOOLS` or `TEXT_TOOLS`. A test asserts the classification is exhaustive; an unclassified tool is invisible to `scripts/eval_analyst.py`, which would keep reporting a score while no longer covering the agent.
 - **Tools must return text, not dicts.** The tool runner 400s on an object, and the error names neither the tool nor the cause.
-- Routing is scored (12/12); answer correctness is **not** measured yet.
+- Routing is scored by `scripts/eval_analyst.py` (12/12). Answers are scored by `scripts/eval_answers.py` on **faithfulness**, not accuracy (99/103 claims, ADR 0017).
+- **The judge must see everything the agent saw.** It gets tool results *and* `tool_descriptions()`. Judging on results alone scored 84% and reported four fabrications that were really the agent explaining its own limits from the tool docs. An eval that sees less than the system does reports failures that look specific and are not real.
+- **Declining well is not silence.** "There is no goalscorer data; here is what the database holds" is a correct refusal. Do not measure abstention as "made zero claims" — measure it as "asserted nothing the evidence cannot carry".
 
 **The entity-resolution agent** (`agents/resolve_agent.py`, ADR 0013) decides only what `resolve.py` refuses. Rules for changing it:
 
